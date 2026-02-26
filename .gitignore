@@ -1,0 +1,10 @@
+# OS
+.DS_Store
+
+# OpenClaw runtime data (don't commit user data)
+skills/market-sentry/data/
+skills/market-sentry/outbox/
+
+# IDE
+.cursor/
+.vscode/
