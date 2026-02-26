@@ -76,7 +76,7 @@ Field rules:
         "quiet_hours": { "start": "15:30", "end": "09:15", "tz": "Asia/Shanghai" }
       },
       "push_policy": "both",
-      "digest_time": "15:05",
+      "digest_time": "15:00",
       "digest_tz": "Asia/Shanghai",
       "delivery": {
         "feishu": true,
@@ -100,13 +100,13 @@ Default `quiet_hours` by market:
 - `CRYPTO`: no quiet hours (24/7)
 
 Default `digest_time` by market:
-- `CN_A`: `"15:05"` (just after close)
+- `CN_A`: `"15:00"` (at close)
 - `US`: `"16:05"` ET
 - `CRYPTO`: `null` (no scheduled brief)
 
 ### Alert (`alerts.json`)
 
-Same as before. Alert ID format: `A-YYYYMMDD-NNNNN`.
+Alert ID format: `A-YYYYMMDD-NNNNN`.
 
 ```json
 {
@@ -115,153 +115,74 @@ Same as before. Alert ID format: `A-YYYYMMDD-NNNNN`.
 }
 ```
 
-### Brief (`briefs/<symbol>/<date>.json`)
+### Brief (`briefs/YYYY-MM-DD/{asset_id}.md`)
 
-```json
-{
-  "brief_id": "B-688306-20260225",
-  "symbol": "688306",
-  "name": "均普智能",
-  "market": "CN_A",
-  "as_of": "2026-02-25T15:00:00+08:00",
-  "generated_at": "2026-02-25T15:05:30+08:00",
-  "quote": {
-    "price": 10.70,
-    "change_pct": -0.56,
-    "open": 10.75,
-    "high": 10.83,
-    "low": 10.66,
-    "amount": 125000000,
-    "amount_display": "1.25亿元",
-    "turnover_pct": 0.95,
-    "amplitude_pct": 1.58
-  },
-  "events": [
-    {
-      "date": "2026-02-27",
-      "type": "shareholder_meeting",
-      "text": "将于2月27日召开2026年第一次临时股东会，审议调整募投项目闲置场地用途、预计年度日常关联交易等多项议案",
-      "source": "巨潮资讯"
-    },
-    {
-      "date": "2026-02-13",
-      "type": "strategic_investment",
-      "text": "作为产业投资方，战略投资具身智能数据平台觅蜂科技，布局具身智能数据新基建",
-      "source": "公告"
-    },
-    {
-      "date": "2026-02-12",
-      "type": "bond_issuance",
-      "text": "成功发行全国首单AI+人形机器人研发领域科创债，规模2亿元，票面利率2.49%，资金将用于相关技术研发及装备升级",
-      "source": "公告"
-    }
-  ],
-  "fund_flow": {
-    "date": "2026-02-24",
-    "main_net_flow": -10170900,
-    "main_net_flow_display": "净流出1017.09万",
-    "main_pct_of_amount": 7.1,
-    "interpretation": "主力资金今日净流出约1598.5万元，占成交比例较高，显示短期资金态度偏谨慎"
-  },
-  "technical": {
-    "pattern": "股价今日小幅收跌，振幅1.58%，整体在10.66元至10.83元区间内窄幅震荡。成交量较前一交易日有所萎缩，技术形态呈现弱势整理格局",
-    "resistance": "10.83元（今日高点）及11元整数关口附近",
-    "support": "10.66元（今日低点）及10.5元平台附近"
-  },
-  "research_notes": [
-    {
-      "confidence": "中",
-      "text": "事件驱动弱、资金偏谨慎，短期延续震荡概率较大",
-      "evidence_ids": ["E-flow", "E-price"]
-    },
-    {
-      "confidence": "低",
-      "text": "人形机器人/具身智能政策主题对估值弹性",
-      "evidence_ids": ["E-event-2", "E-event-3"]
-    },
-    {
-      "confidence": "中",
-      "text": "债券融资利率低，研发投入预期增强中长期逻辑",
-      "evidence_ids": ["E-event-3"]
-    }
-  ],
-  "evidence_pack_id": "EP-B-688306-20260225-v1",
-  "pushed_at": "2026-02-25T15:05:45+08:00"
-}
+The brief file is the narrative text exactly as pushed to Feishu. Example:
+
+```markdown
+均普智能（688306）：资金净流出，将召开临时股东会
+
+^解读
+
+最新价格：10.52元（-1.68％），2月25日，均普智能主力资金净流出1541.73万元，占总成交额12.35%。主力资金呈净流出状态，散户资金呈现净流入。股价小幅下跌，走势与所属的自动化设备板块（+1.93%）存在背离。交易量较前一交易日有所活跃，量比为1.70。
+
+公司拟于2月27日召开2026年第一次临时股东会，审议调整募投项目闲置场地用途、预计年度日常关联交易等多项议案。
+
+2月13日，公司作为产业投资方，战略投资具身智能数据平台觅蜂科技，布局具身智能数据新基建。
+
+2月12日，公司在银行间市场成功发行全国首单AI+人形机器人研发领域科创债，发行规模2亿元，票面利率2.49%。
 ```
 
-### EvidencePack (for briefs and alerts)
+### EvidencePack (`evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`)
 
 ```json
 {
-  "pack_id": "EP-B-688306-20260225-v1",
-  "ref_id": "B-688306-20260225",
-  "ref_type": "brief",
-  "version": 1,
-  "generated_at": "2026-02-25T15:05:30+08:00",
+  "pack_id": "B-688306-2026-02-25",
+  "type": "narrative_brief",
+  "asof": "2026-02-25T15:00:00+08:00",
+  "asset": { "market": "CN_A", "symbol": "688306", "name": "均普智能" },
   "evidences": [
     {
-      "evidence_id": "E-price",
+      "evidence_id": "E1",
       "source_type": "quote",
-      "source_name": "东方财富",
-      "url_or_id": "https://quote.eastmoney.com/sh688306.html",
-      "retrieved_at": "2026-02-25T15:05:00+08:00",
-      "excerpt": "688306 均普智能: 10.70 -0.56% 成交额1.25亿 换手0.95%"
+      "status": "ok",
+      "source_name": "东方财富 push2",
+      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/get?secid=1.688306&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86",
+      "retrieved_at": "2026-02-25T15:01:00+08:00",
+      "excerpt": "10.52 -1.68% 成交额1.25亿 换手0.95% 量比1.70 主力净流出1541.73万"
     },
     {
-      "evidence_id": "E-flow",
-      "source_type": "fund_flow",
-      "source_name": "东方财富资金流向",
-      "url_or_id": "https://data.eastmoney.com/zjlx/688306.html",
-      "retrieved_at": "2026-02-25T15:05:10+08:00",
-      "excerpt": "2/24盘后 主力净流出1017.09万 占总成交额7.1%"
-    },
-    {
-      "evidence_id": "E-event-1",
+      "evidence_id": "E2",
       "source_type": "announcement",
+      "status": "ok",
       "source_name": "巨潮资讯",
-      "url_or_id": "http://www.cninfo.com.cn/...",
-      "published_at": "2026-02-25T00:00:00+08:00",
-      "retrieved_at": "2026-02-25T15:05:15+08:00",
-      "excerpt": "将于2/27召开临时股东会，审议多项议案"
+      "url_or_id": "https://www.cninfo.com.cn/new/hisAnnouncement/query",
+      "attempted_url": "stock=688306&tabName=fulltext&pageSize=10&pageNum=1&seDate=2026-01-26~2026-03-04",
+      "retrieved_at": "2026-02-25T15:01:10+08:00",
+      "excerpt": "临时股东会2/27, 战略投资觅蜂科技2/13, 科创债2亿2/12"
     },
     {
-      "evidence_id": "E-event-2",
-      "source_type": "announcement",
-      "source_name": "公告",
-      "published_at": "2026-02-13T00:00:00+08:00",
-      "retrieved_at": "2026-02-25T15:05:18+08:00",
-      "excerpt": "战略投资觅蜂科技，布局具身智能数据新基建"
-    },
-    {
-      "evidence_id": "E-event-3",
-      "source_type": "announcement",
-      "source_name": "公告",
-      "published_at": "2026-02-12T00:00:00+08:00",
-      "retrieved_at": "2026-02-25T15:05:20+08:00",
-      "excerpt": "发行AI+人形机器人科创债2亿元 票面利率2.49%"
+      "evidence_id": "E3",
+      "source_type": "news",
+      "status": "ok",
+      "source_name": "GDELT",
+      "url_or_id": "https://api.gdeltproject.org/api/v2/doc/doc?query=(%22均普智能%22+OR+%22688306%22)&mode=artlist&format=json&maxrecords=5&timespan=1week",
+      "attempted_url": "query=(\"均普智能\" OR \"688306\")",
+      "retrieved_at": "2026-02-25T15:01:15+08:00",
+      "excerpt": "2 articles found"
     }
   ],
-  "claims": [
-    {
-      "claim_id": "C1",
-      "text": "资金面偏谨慎，主力持续净流出",
-      "evidence_ids": ["E-flow"],
-      "confidence": "中"
-    },
-    {
-      "claim_id": "C2",
-      "text": "具身智能布局+低成本融资强化中长期逻辑",
-      "evidence_ids": ["E-event-2", "E-event-3"],
-      "confidence": "低"
-    }
-  ]
+  "claims": []
 }
 ```
 
-## Feishu Card Templates
+Key rules:
+- E2 and E3 MUST exist even when retrieval failed: `"status": "unavailable"` + `attempted_url` + `error`
+- `claims` array may be empty for narrative briefs (analysis is woven into the narrative)
 
-### Brief Card (Mode B webhook)
+## Feishu Templates
+
+### Narrative Brief Card (Mode B webhook)
 
 ```json
 {
@@ -269,15 +190,15 @@ Same as before. Alert ID format: `A-YYYYMMDD-NNNNN`.
   "card": {
     "config": { "wide_screen_mode": true },
     "header": {
-      "title": { "tag": "plain_text", "content": "解读：{name}({symbol})" },
-      "template": "blue"
+      "title": { "tag": "plain_text", "content": "{name}（{symbol}）：{headline}" },
+      "template": "{red_or_green_or_grey}"
     },
     "elements": [
       {
         "tag": "div",
         "text": {
           "tag": "lark_md",
-          "content": "**{name} {symbol}**  {price} {change_pct}%\n\n截至{date} {time}，**{name}({symbol})**最新价格：{price}元，最新涨跌幅：{change_pct}%。{price_context}。成交额{amount}，换手率{turnover}%。\n\n{events_text}\n\n📈 **技术与资金**\n\n| 维度 | 分析要点 |\n|------|----------|\n| 资金流向 | {flow_text} |\n| 技术形态 | {tech_text} |\n| 上方阻力 | {resistance} |\n| 下方支撑 | {support} |\n\n📝 **投研要点**\n{research_notes_text}\n\n*以上内容由 AI 生成，不构成任何投资建议*"
+          "content": "**^解读**\n\n最新价格：{price}元（{pct}%），{date}，{name}主力资金{direction}{amount}万元，占总成交额{ratio}%。主力资金呈{main_dir}状态，散户资金呈现{retail_dir}。{price_ctx}，走势与所属的{sector}板块（{sector_pct}%）{diverge}。交易量{vol_ctx}，量比为{vol_ratio}。\n\n{event_paragraphs}"
         }
       }
     ]
@@ -285,10 +206,10 @@ Same as before. Alert ID format: `A-YYYYMMDD-NNNNN`.
 }
 ```
 
-Header `template` color by change:
-- Positive change → `"red"` (A-share convention: red = up)
-- Negative change → `"green"` (A-share convention: green = down)
-- Flat (< 0.1%) → `"blue"`
+Header `template` color (A-share convention):
+- Positive change → `"red"` (red = up)
+- Negative change → `"green"` (green = down)
+- Flat (< 0.1%) → `"grey"`
 
 ### Alert Card (Mode B webhook)
 
@@ -298,7 +219,7 @@ Header `template` color by change:
   "card": {
     "config": { "wide_screen_mode": true },
     "header": {
-      "title": { "tag": "plain_text", "content": "[异动] {symbol} {direction}{r_5m}% (5m) | {severity}" },
+      "title": { "tag": "plain_text", "content": "{name}（{symbol}）：{alert_headline}" },
       "template": "{color}"
     },
     "elements": [
@@ -306,15 +227,7 @@ Header `template` color by change:
         "tag": "div",
         "text": {
           "tag": "lark_md",
-          "content": "**发生了什么**\n- 5m: {direction}{r_5m}%  |  1h: {direction}{r_1h}%\n- 波动Z: {vol_z}  |  量能Z: {volume_z}\n- 当前价: {price}\n\n**初步解释（置信度：{confidence}）**\n- {primary_claim}（证据 {evidence_ids}）\n\n**下一步**\n- 持续追踪中，若出现新证据将推送更新\n\n`{alert_id}`"
-        }
-      },
-      { "tag": "hr" },
-      {
-        "tag": "div",
-        "text": {
-          "tag": "lark_md",
-          "content": "**证据链接**\n{evidence_links}"
+          "content": "**^解读**\n\n{narrative_paragraph}"
         }
       }
     ]
@@ -375,7 +288,7 @@ After alert fires, suppress for `cooldown_min` unless:
 |---|---|---|---|
 | `pct` | 2% | 2% | 3% |
 | `push_policy` | `"both"` | `"both"` | `"on_trigger"` |
-| `digest_time` | `"15:05"` | `"16:05"` | `null` |
+| `digest_time` | `"15:00"` | `"16:05"` | `null` |
 | `digest_tz` | `Asia/Shanghai` | `America/New_York` | — |
 | `quiet_hours` | 15:30–09:15 CST | 16:05–09:25 ET | none |
 | `window` | `5m` | `5m` | `5m` |
@@ -389,3 +302,26 @@ After alert fires, suppress for `cooldown_min` unless:
 | 830xxx, 8xxxxx (NQ) | Beijing (BJ) | `bj` or `0.` |
 
 Example URL: `https://quote.eastmoney.com/sh688306.html`
+
+## CN_A push2 field reference
+
+Full field list used in one-call URL:
+
+| Field | Meaning | Conversion |
+|---|---|---|
+| f57 | Code | — |
+| f58 | Name | — |
+| f43 | Price | 分→/100=元 (skip if already reasonable) |
+| f170 | Change% | 1/100%→/100=% |
+| f44 | High | 分→/100 |
+| f45 | Low | 分→/100 |
+| f46 | Open | 分→/100 |
+| f47 | Volume | 股 |
+| f48 | Amount | 元→/1e8=亿元, →/1e4=万元 |
+| f50 | 量比 (volume ratio) | /100 if >10, else as-is |
+| f168 | Turnover% | 1/100%→/100=% |
+| f137 | Main net inflow | 元→/1e4=万元; >0=净流入, <0=净流出 |
+| f193 | Main net ratio | 1/100%→/100=% |
+| f86 | Timestamp | Unix sec → HH:MM CST |
+
+散户方向: if 主力净流出 → 散户净流入 (and vice versa).
