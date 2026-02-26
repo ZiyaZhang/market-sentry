@@ -38,8 +38,9 @@ Base dir: `{baseDir}`
 - `{baseDir}/data/alerts.json` — anomaly events
 - `{baseDir}/data/briefs/YYYY-MM-DD/<asset_id>.md` — daily brief (markdown)
 - `{baseDir}/data/evidence_packs/<id>/v<N>.json` — versioned evidence
-- `{baseDir}/data/price_cache.json` — latest price snapshots
+- `{baseDir}/data/price_cache.json` — rolling price history (last 30min per asset)
 - `{baseDir}/outbox/feishu/<ts>_<id>.json` — delivery log
+- `{baseDir}/logs/monitor-YYYYMMDD.log` — monitor debug logs (NOT chat output)
 
 Create parent dirs with `mkdir -p` before first write. All JSON pretty-printed.
 
@@ -210,15 +211,21 @@ openclaw cron add \
 
 ### `/ms watch start`
 
-Create the **anomaly monitor** cron only (separate from digest):
+Create the **anomaly monitor** cron. **CRITICAL: no-deliver mode** — the monitor runs silently in the background and only pushes to Feishu when a trigger occurs (via message tool inside the run, not via cron delivery).
+
 ```bash
 openclaw cron add \
   --name "market-sentry:monitor" \
   --cron "*/5 * * * *" \
   --session isolated \
-  --message "You are market-sentry. Read {baseDir}/SKILL.md then run the monitor loop (anomaly detection only, NOT briefs)." \
-  --announce --channel feishu \
+  --no-deliver \
+  --message "You are market-sentry. Read {baseDir}/SKILL.md then run the SILENT monitor loop. RULES: 1) If NO triggers and NO new events: output NOTHING to chat, write debug info ONLY to {baseDir}/logs/monitor-YYYYMMDD.log, then stop. 2) ONLY when a trigger fires: create alert + evidence pack, push Feishu message for that asset via message tool, append to outbox/feishu/. 3) NEVER output summaries or run logs to chat." \
   --wake now
+```
+
+If updating an existing job, use:
+```bash
+openclaw cron edit <job-id> --no-deliver
 ```
 
 ### `/ms explain <alert_id>`
@@ -354,20 +361,67 @@ AI-generated, not investment advice
 
 ---
 
-## Monitor loop (cron job — anomaly detection ONLY)
+## Monitor loop (cron job — SILENT anomaly detection)
 
-The monitor cron does NOT produce briefs. It only detects anomalies.
+The monitor cron does NOT produce briefs. It runs **silently** (no chat output) and only pushes to Feishu when a trigger fires.
 
-1. **Load** — Read `watch_rules.json` and `alerts.json`
+### Output rules (STRICT)
+
+- **No trigger** → write debug log to `{baseDir}/logs/monitor-YYYYMMDD.log`, output NOTHING to chat, do NOT call message tool
+- **Trigger fires** → push alert to Feishu via message tool (or curl for Mode B), then write to outbox
+- **NEVER** output run summaries, "0 triggers" messages, or debug info to chat
+
+### Rolling price cache (`price_cache.json`)
+
+Store a **rolling history** per asset (not just the latest point). Keep last 30 minutes of data points:
+
+```json
+{
+  "688306": {
+    "points": [
+      {"ts": "2026-02-26T07:10:00+08:00", "price": 10.60},
+      {"ts": "2026-02-26T07:15:00+08:00", "price": 10.55},
+      {"ts": "2026-02-26T07:20:00+08:00", "price": 10.58}
+    ]
+  },
+  "BTC": {
+    "points": [
+      {"ts": "2026-02-26T07:10:00Z", "price": 65100},
+      {"ts": "2026-02-26T07:15:00Z", "price": 65200}
+    ]
+  }
+}
+```
+
+- **Append** new price point each run (do NOT overwrite the whole file)
+- **Prune** points older than 30 minutes to prevent file growth
+- To compute 5m return: find the point closest to `now - 5m`, calculate `(now_price - ref_price) / ref_price`
+
+### Bootstrap (cold start)
+
+If `points` array for an asset is empty or has only 1 entry:
+1. Try to fetch recent K-line (2-4 bars of configured window) from provider
+2. If K-line available: populate `points` with historical bars, then evaluate trigger normally
+3. If K-line unavailable: record current price as first point, log "baseline established for {symbol}" to log file, **skip trigger this iteration** (NOT to chat)
+
+On the **next run** (5 min later), there will be 2+ points and triggers can evaluate normally.
+
+### Execution sequence
+
+1. **Load** — Read `watch_rules.json`, `alerts.json`, `price_cache.json`
 2. **Fetch** — Get current prices via providers
-3. **Bootstrap** — If cache lacks prior price: fetch K-line or record baseline, skip trigger
+3. **Append** — Add new price point to `price_cache.json` per asset, prune old points
 4. **Detect** — For rules with `push_policy` = `"on_trigger"` or `"both"`:
+   - Compute return using rolling history
    - Run configured detector(s)
-5. **Alert** — For hits: check cooldown, create alert, assign severity
-6. **Explain** — Build EvidencePack v1
-7. **Push** — Deliver alert to Feishu
-8. **Follow-up** — Check open followed alerts
-9. **Save** — Write updated data files
+5. **If NO triggers** → write 1-line log entry to `logs/monitor-YYYYMMDD.log`, save `price_cache.json`, STOP
+6. **If trigger(s) fire**:
+   a. Check cooldown, create alert, assign severity
+   b. Build EvidencePack v1
+   c. **Push alert to Feishu** (this is the ONLY time to send a message)
+   d. Write to `outbox/feishu/`
+7. **Follow-up** — Check open followed alerts for new evidence
+8. **Save** — Write updated `alerts.json` and `price_cache.json`
 
 ## Explanation policy (auditable — STRICT)
 
