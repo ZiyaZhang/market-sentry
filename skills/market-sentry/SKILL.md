@@ -184,48 +184,30 @@ Process:
 
 **If sector unknown or API fails** → omit the sector sentence from narrative. Do NOT block.
 
-### Step 3: Fetch E2 — CNINFO announcements (MUST attempt)
+### Step 3: Fetch E2+E3 — Announcements + News from 东方财富搜索 API
+
+**This replaces both CNINFO and GDELT.** One request covers announcements AND news.
+
+CNINFO requires orgId (not just stock code) and GDELT has strict rate limits + no Chinese A-share coverage. 东方财富搜索 API works reliably.
 
 ```
-POST https://www.cninfo.com.cn/new/hisAnnouncement/query
-Content-Type: application/x-www-form-urlencoded
-
-stock={code}&tabName=fulltext&pageSize=10&pageNum=1&category=&seDate={30d_ago}~{7d_ahead}
+GET https://search-api-web.eastmoney.com/search/jsonp?cb=jQuery&param={"uid":"","keyword":"{code}","type":["cmsArticleWebOld"],"client":"web","clientType":"web","clientVersion":"curr","param":{"cmsArticleWebOld":{"searchScope":"default","sort":"default","pageIndex":1,"pageSize":10}}}
 ```
 
-Date format: `YYYY-MM-DD` (e.g., `seDate=2026-01-26~2026-03-04`).
+**IMPORTANT**: URL-encode the `param` JSON value. Headers: `User-Agent: Mozilla/5.0`, `Referer: https://so.eastmoney.com/`
 
-Response JSON: `announcements` array. Each has `announcementTitle`, `announcementTime` (ms), `adjunctUrl`.
+Response: JSONP wrapper `jQuery(...)`. Strip wrapper, parse JSON.
+Path: `result.cmsArticleWebOld.list[]` — each has `title`, `date`, `url`, `mediaName`.
 
 Processing:
-1. Extract `announcementTitle` from each
-2. Filter by keywords: 股东会, 临时股东会, 募投, 募集资金, 关联交易, 债券, 科创债, 发行, 投资, 战略投资, 对外投资, 分红, 业绩, 年报, 季报
-3. Take top 3 matching titles
-4. Each becomes an event paragraph
+1. Strip `<em>` tags from titles
+2. Filter by keywords: 股东会, 临时股东会, 募投, 关联交易, 债券, 科创债, 发行, 投资, 战略投资, 分红, 业绩, 年报
+3. Take top 3-5 matching articles by date
+4. Each becomes an event paragraph: `{date}，{title_as_event_description}。`
 
-**If CNINFO request fails** (HTTP error, timeout, blocked):
-- Narrative: event paragraph says "公告数据暂不可达（请求失败）。"
-- EvidencePack: E2 `status="unavailable"`, `attempted_url="https://www.cninfo.com.cn/new/hisAnnouncement/query"`, `error="{HTTP status or error message}"`
-
-**If CNINFO returns empty** (no matching announcements):
-- Narrative: "近期暂无重要公告。"
-- EvidencePack: E2 `status="ok"`, note "0 matching results"
-
-### Step 4: Fetch E3 — News from GDELT (MUST attempt, no API key needed)
-
-```
-GET https://api.gdeltproject.org/api/v2/doc/doc?query={q}&mode=artlist&format=json&maxrecords=5&timespan=1week&sort=datedesc
-```
-
-CN_A query: `q=("均普智能" OR "688306")` (URL-encode quotes and Chinese).
-
-Response JSON: `articles` array. Each has `title`, `url`, `seendate`.
-
-Pick top 1-3 articles by date. Each becomes an event paragraph (merge with CNINFO events, deduplicate).
-
-**If GDELT fails**: try `web_search "{name} {code} 最新消息"` as fallback. If both fail:
-- Narrative: "暂无近期相关新闻。"
-- EvidencePack: E3 `status="unavailable"`, `attempted_url` + `error`
+**If search API fails**: try `web_search "{name} {code} 最新消息"` as fallback. If both fail:
+- Narrative: "暂无近期相关公告或新闻。"
+- EvidencePack: E2 `status="unavailable"`, E3 `status="unavailable"`, record `attempted_url` + `error`
 
 ### Step 5: Build headline
 
@@ -480,8 +462,7 @@ Path: `{baseDir}/data/evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`
 | push2his kline | Error | "行情数据暂不可获取" | E1a unavailable |
 | push2 stock/get | Error | Omit 量比 sentence | E1b unavailable |
 | fflow kline/get | Error | Try f137 fallback; still fails → "资金面数据暂缺" | E1c unavailable |
-| CNINFO | Fail/empty | "近期暂无重要公告。" or "公告数据源暂不可达。" | E2 unavailable |
-| GDELT/news | Fail/empty | "暂无近期相关新闻。" | E3 unavailable |
+| 东方财富搜索 API | Fail/empty | "暂无近期相关公告或新闻。" | E2+E3 unavailable |
 | clist/get (sector) | Unavailable | Omit sector sentence (no error text needed) | — |
 
 **Brief MUST be pushed even with degraded data.** Never block on a single source.
