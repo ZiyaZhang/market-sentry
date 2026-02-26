@@ -313,7 +313,7 @@ After alert fires, suppress for `cooldown_min` unless:
 
 Example URL: `https://quote.eastmoney.com/sh688306.html`
 
-## CN_A Data Sources — Two API calls
+## CN_A Data Sources
 
 ### E1a: push2his K-line (OHLC + amount + turnover)
 
@@ -323,10 +323,10 @@ GET https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&klt=101&
 
 Response: `data.klines` array, each = `"date,open,close,high,low,volume,amount,amplitude%,change_pct%,change_amount,turnover%"`
 
-### E1b: push2 stock/get (real-time + fund flow + 量比)
+### E1b: push2 stock/get (snapshot + 量比)
 
 ```
-GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86
+GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f86
 ```
 
 | Field | Meaning | Conversion |
@@ -342,11 +342,61 @@ GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f4
 | f48 | Amount | 元→/1e8=亿元, →/1e4=万元 |
 | f50 | 量比 (volume ratio) | /100 if >10, else as-is |
 | f168 | Turnover% | 1/100%→/100=% |
-| f137 | Main net inflow | 元→/1e4=万元; >0=净流入, <0=净流出 |
-| f193 | Main net ratio | 1/100%→/100=% |
 | f86 | Timestamp | Unix sec → HH:MM CST |
 
+### E1c: fflow kline/get (PRIMARY fund flow source — 主力资金)
+
+**This is the dedicated fund flow endpoint. Use this as the primary source for 主力净流/净比.**
+
+```
+GET https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid={secid}&klt=101&lmt=1&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
+```
+
+Response: `data.klines` = array of `"date,主力净流入,小单净流入,中单净流入,大单净流入,超大单净流入"` (all in 元).
+
+| Column | Meaning | Conversion |
+|---|---|---|
+| 0 | Date | YYYY-MM-DD |
+| 1 | 主力净流入 | 元→/1e4=万元; >0=净流入, <0=净流出 |
+| 2 | 小单净流入 | 元→/1e4=万元 |
+| 3 | 中单净流入 | 元→/1e4=万元 |
+| 4 | 大单净流入 | 元→/1e4=万元 |
+| 5 | 超大单净流入 | 元→/1e4=万元 |
+
 **Calculations**:
-- `main_net_wan = abs(f137) / 10000`
-- `main_ratio = f193` or `abs(f137) / f48 * 100` (fallback)
+- `main_net_wan = abs(column_1) / 10000`
+- `main_ratio = abs(column_1) / amount_from_E1a * 100` (占成交额%)
 - 散户方向 = inverse of 主力 (if 主力净流出 → 散户净流入)
+
+**Historical fund flow** (recent N days, for trend):
+```
+GET https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid={secid}&klt=101&lmt=30&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
+```
+
+### Sector board data (clist/get)
+
+**Industry boards (行业板块)**:
+```
+GET https://push2.eastmoney.com/api/qt/clist/get?fs=m:90+t:2&fields=f2,f3,f12,f14&fid=f3&pn=1&pz=50&po=1
+```
+
+**Concept boards (概念板块)**:
+```
+GET https://push2.eastmoney.com/api/qt/clist/get?fs=m:90+t:3&fields=f2,f3,f12,f14&fid=f3&pn=1&pz=50&po=1
+```
+
+Response fields: `f14` = board name, `f3` = change%, `f12` = board code, `f2` = latest index.
+
+**Batch fund flow (ulist.np/get)** for boards/indices:
+```
+GET https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids={secid_list}&fields=f62,f184,f66,f69,f72,f75,f78,f81,f84,f87
+```
+f62=主力净流入, f184=主力净比, f66=超大单净流入, f69=超大单净比, etc.
+
+### Fallback: f137/f193 from stock/get
+
+If fflow kline/get fails, add f137,f193 to the stock/get request as fallback:
+```
+GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86
+```
+f137 = main net inflow (元), f193 = main net ratio (%). Use same calculations.

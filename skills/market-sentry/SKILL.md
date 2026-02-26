@@ -139,25 +139,50 @@ Response `data.klines` = array of strings: `"date,open,close,high,low,volume,amo
 
 Extract from the LAST kline entry: date, open, close(=price), high, low, volume, amount(元), turnover%.
 
-### Step 2: Fetch E1b — Real-time snapshot + fund flow + 量比
+### Step 2: Fetch E1b — Snapshot + 量比 (push2 stock/get)
 
 ```
-GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86
+GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f86
 ```
 
-Extract:
-- **f137** → main net inflow (元). Convert: `/1e4` = 万元. Sign determines direction.
-- **f193** → main net ratio (%). May need `/100` if raw value >10.
-- **f50** → 量比 (volume ratio). May need `/100` if raw value >10.
-- **f48** → amount (元). Use to calculate ratio if f193 unavailable.
+Extract **f50** (量比). May need `/100` if raw value >10.
+
+### Step 2b: Fetch E1c — Fund flow (fflow kline/get, PRIMARY source for 主力资金)
+
+This is the **dedicated fund flow endpoint** — more reliable than f137 from stock/get.
+
+```
+GET https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid={secid}&klt=101&lmt=1&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
+```
+
+Response `data.klines` = array of `"date,主力净流入,小单净流入,中单净流入,大单净流入,超大单净流入"` (元).
+
+Extract from the LAST entry:
+- **Column 1** (主力净流入, 元) → `main_net`. `/1e4` = 万元.
+- Sign: >0 = 净流入, <0 = 净流出.
 
 Calculate:
-- `main_net_wan = abs(f137) / 10000` (万元)
-- `main_ratio = f193` OR `abs(f137) / f48 * 100` (%)
-- `main_direction`: f137 > 0 → "净流入", f137 < 0 → "净流出"
-- `retail_direction`: inverse of main_direction
+- `main_net_wan = abs(main_net) / 10000` (万元)
+- `main_ratio = abs(main_net) / amount_from_Step1 * 100` (占成交额%)
+- `main_direction`: >0 → "净流入", <0 → "净流出"
+- `retail_direction`: inverse of main (主力净流出 → 散户净流入)
 
-**If push2 stock/get fails or f137 is missing**: narrative says "资金面数据暂缺", omit flow sentence.
+**Fallback**: if fflow fails, try f137/f193 from push2 stock/get (add f137,f193 to Step 2 fields). If both fail → "资金面数据暂缺".
+
+### Step 2c: Fetch sector board data (clist/get, for 板块背离/同步)
+
+```
+GET https://push2.eastmoney.com/api/qt/clist/get?fs=m:90+t:2&fields=f2,f3,f12,f14&fid=f3&pn=1&pz=50&po=1
+```
+
+Response: industry board list. `f14` = board name, `f3` = change% (today).
+
+Process:
+1. Look up which board the stock belongs to (check watch_rules `sector` field, or search board names for a match).
+2. Find that board's `f3` change%.
+3. Compare: stock up + board up = 同步; stock down + board up = 背离; etc.
+
+**If sector unknown or API fails** → omit the sector sentence from narrative. Do NOT block.
 
 ### Step 3: Fetch E2 — CNINFO announcements (MUST attempt)
 
@@ -186,17 +211,17 @@ Processing:
 - Narrative: "近期暂无重要公告。"
 - EvidencePack: E2 `status="ok"`, note "0 matching results"
 
-### Step 4: Fetch E3 — News from GDELT (MUST attempt)
+### Step 4: Fetch E3 — News from GDELT (MUST attempt, no API key needed)
 
 ```
-GET https://api.gdeltproject.org/api/v2/doc/doc?query={q}&mode=artlist&format=json&maxrecords=5&timespan=1week
+GET https://api.gdeltproject.org/api/v2/doc/doc?query={q}&mode=artlist&format=json&maxrecords=5&timespan=1week&sort=datedesc
 ```
 
-CN_A query: `q=("均普智能" OR "688306")` (URL-encode the quotes and Chinese characters).
+CN_A query: `q=("均普智能" OR "688306")` (URL-encode quotes and Chinese).
 
 Response JSON: `articles` array. Each has `title`, `url`, `seendate`.
 
-Pick top 1-3 articles. Each becomes an event paragraph (or merge with CNINFO events).
+Pick top 1-3 articles by date. Each becomes an event paragraph (merge with CNINFO events, deduplicate).
 
 **If GDELT fails**: try `web_search "{name} {code} 最新消息"` as fallback. If both fail:
 - Narrative: "暂无近期相关新闻。"
@@ -226,20 +251,35 @@ Combine events from Steps 3-4. Deduplicate. Order by date (most recent first). M
 ## US Brief Generation Recipe
 
 ### Step 1: Fetch quote
-Use Stooq CSV: `https://stooq.com/q/l/?s={symbol}.us&f=sd2t2ohlcv&h&e=csv`
-Or Yahoo Finance. Extract: date, open, high, low, close, volume.
+**Primary**: Finnhub (free 60 calls/min): `GET https://finnhub.io/api/v1/quote?symbol={SYMBOL}&token={FINNHUB_TOKEN}`
+**Fallback**: Stooq CSV: `GET https://stooq.com/q/l/?s={symbol}.us&f=sd2t2ohlcv&h&e=csv`
 
-### Step 2: Fetch events/news
-GDELT: `q=("{symbol}" OR "{company_name}")` + `web_search` as fallback.
+### Step 2: Fetch events
+**SEC EDGAR** (official, free, max 10 req/s, User-Agent required):
+```
+GET https://efts.sec.gov/LATEST/search-index?q=%22{company_name}%22&dateRange=custom&startdt={30d_ago}&enddt={today}&forms=8-K,10-K,10-Q
+```
+Or: `GET https://data.sec.gov/submissions/CIK{cik_padded}.json` for recent filings.
 
-### Step 3-5: Same as CN_A (headline, narrative, events, push+save)
+### Step 3: Fetch news
+**Finnhub company news**: `GET https://finnhub.io/api/v1/company-news?symbol={SYMBOL}&from={7d_ago}&to={today}&token={FINNHUB_TOKEN}`
+**Fallback**: GDELT `q=("{symbol}" OR "{company_name}")` + `web_search`.
+
+### Step 4-6: Same as CN_A (headline, narrative, events, push+save)
 
 ## CRYPTO Brief Generation Recipe
 
 ### Step 1: Fetch quote
-CoinGecko: `https://api.coingecko.com/api/v3/simple/price?ids={id}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`
+CoinGecko (free 30 calls/min, 10k/month): `GET https://api.coingecko.com/api/v3/simple/price?ids={id}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`
 
-### Step 2-5: Same pattern (GDELT for news, assemble, push, save)
+### Step 2: Fetch on-chain (optional)
+**Etherscan** (free 3 calls/sec, 100k/day): `GET https://api.etherscan.io/api?module=account&action=txlist&address={addr}&startblock=0&endblock=99999999&sort=desc&apikey={ETHERSCAN_KEY}`
+For large transfers/whale activity evidence.
+
+### Step 3: Fetch news
+GDELT `q=("Bitcoin" OR "BTC")` + `web_search` fallback.
+
+### Step 4-6: Same pattern (headline, narrative, events, push+save)
 
 ---
 
@@ -275,6 +315,8 @@ Base dir: `{baseDir}`
 | `FEISHU_WEBHOOK_URL` | Mode B only | Webhook |
 | `FEISHU_SIGN_SECRET` | No | Signing |
 | `BRAVE_API_KEY` | No | web_search |
+| `FINNHUB_TOKEN` | No (US stocks) | Finnhub quote + news |
+| `ETHERSCAN_KEY` | No (crypto) | Etherscan on-chain |
 
 ## Delivery Channels
 
@@ -384,17 +426,25 @@ Path: `{baseDir}/data/evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`
       "evidence_id": "E1a",
       "source_type": "kline",
       "status": "ok",
-      "url_or_id": "https://push2his.eastmoney.com/...",
+      "url_or_id": "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=...",
       "retrieved_at": "{iso}",
-      "excerpt": "close=10.52 pct=-1.68% amount=1.25亿"
+      "excerpt": "close=10.52 pct=-1.68% high=10.83 low=10.66 amount=1.25亿 turnover=0.95%"
     },
     {
       "evidence_id": "E1b",
-      "source_type": "flow_snapshot",
+      "source_type": "snapshot",
       "status": "ok|unavailable",
-      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/get?...",
+      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/get?secid=...&fields=...f50...",
       "retrieved_at": "{iso}",
-      "excerpt": "f137=-15417300 f193=-12.35 f50=1.70"
+      "excerpt": "f50=1.70"
+    },
+    {
+      "evidence_id": "E1c",
+      "source_type": "fund_flow",
+      "status": "ok|unavailable",
+      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid=...",
+      "retrieved_at": "{iso}",
+      "excerpt": "主力净流出1541.73万 占成交额12.35%"
     },
     {
       "evidence_id": "E2",
@@ -428,10 +478,11 @@ Path: `{baseDir}/data/evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`
 | Source | If fail | Narrative action | EvidencePack |
 |---|---|---|---|
 | push2his kline | Error | "行情数据暂不可获取" | E1a unavailable |
-| push2 stock/get | Error | Omit flow+量比 sentences: "资金面数据暂缺" | E1b unavailable |
+| push2 stock/get | Error | Omit 量比 sentence | E1b unavailable |
+| fflow kline/get | Error | Try f137 fallback; still fails → "资金面数据暂缺" | E1c unavailable |
 | CNINFO | Fail/empty | "近期暂无重要公告。" or "公告数据源暂不可达。" | E2 unavailable |
 | GDELT/news | Fail/empty | "暂无近期相关新闻。" | E3 unavailable |
-| Sector | Unavailable | Omit sector sentence (no error text needed) | — |
+| clist/get (sector) | Unavailable | Omit sector sentence (no error text needed) | — |
 
 **Brief MUST be pushed even with degraded data.** Never block on a single source.
 
