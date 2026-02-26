@@ -143,13 +143,22 @@ The brief file is the narrative text exactly as pushed to Feishu. Example:
   "asset": { "market": "CN_A", "symbol": "688306", "name": "均普智能" },
   "evidences": [
     {
-      "evidence_id": "E1",
-      "source_type": "quote",
+      "evidence_id": "E1a",
+      "source_type": "kline",
       "status": "ok",
-      "source_name": "东方财富 push2",
-      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/get?secid=1.688306&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86",
+      "source_name": "东方财富 push2his",
+      "url_or_id": "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.688306&klt=101&fqt=1&end=20500101&lmt=3",
       "retrieved_at": "2026-02-25T15:01:00+08:00",
-      "excerpt": "10.52 -1.68% 成交额1.25亿 换手0.95% 量比1.70 主力净流出1541.73万"
+      "excerpt": "close=10.52 pct=-1.68% high=10.83 low=10.66 amount=1.25亿 turnover=0.95%"
+    },
+    {
+      "evidence_id": "E1b",
+      "source_type": "flow_snapshot",
+      "status": "ok",
+      "source_name": "东方财富 push2 stock/get",
+      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/get?secid=1.688306&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86",
+      "retrieved_at": "2026-02-25T15:01:05+08:00",
+      "excerpt": "f137=-15417300(净流出1541.73万) f193=-12.35% f50=1.70"
     },
     {
       "evidence_id": "E2",
@@ -177,8 +186,9 @@ The brief file is the narrative text exactly as pushed to Feishu. Example:
 ```
 
 Key rules:
-- E2 and E3 MUST exist even when retrieval failed: `"status": "unavailable"` + `attempted_url` + `error`
+- E1b, E2, E3 MUST exist even when retrieval failed: `"status": "unavailable"` + `attempted_url` + `error`
 - `claims` array may be empty for narrative briefs (analysis is woven into the narrative)
+- E1a = K-line data (OHLC/amount/turnover), E1b = real-time snapshot + fund flow + 量比
 
 ## Feishu Templates
 
@@ -303,9 +313,21 @@ After alert fires, suppress for `cooldown_min` unless:
 
 Example URL: `https://quote.eastmoney.com/sh688306.html`
 
-## CN_A push2 field reference
+## CN_A Data Sources — Two API calls
 
-Full field list used in one-call URL:
+### E1a: push2his K-line (OHLC + amount + turnover)
+
+```
+GET https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&klt=101&fqt=1&end=20500101&lmt=3&fields1=f1,f2,f3,f4,f5,f6,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61
+```
+
+Response: `data.klines` array, each = `"date,open,close,high,low,volume,amount,amplitude%,change_pct%,change_amount,turnover%"`
+
+### E1b: push2 stock/get (real-time + fund flow + 量比)
+
+```
+GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86
+```
 
 | Field | Meaning | Conversion |
 |---|---|---|
@@ -324,4 +346,7 @@ Full field list used in one-call URL:
 | f193 | Main net ratio | 1/100%→/100=% |
 | f86 | Timestamp | Unix sec → HH:MM CST |
 
-散户方向: if 主力净流出 → 散户净流入 (and vice versa).
+**Calculations**:
+- `main_net_wan = abs(f137) / 10000`
+- `main_ratio = f193` or `abs(f137) / f48 * 100` (fallback)
+- 散户方向 = inverse of 主力 (if 主力净流出 → 散户净流入)

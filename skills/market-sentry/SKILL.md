@@ -12,11 +12,7 @@ You are a financial monitoring and briefing system. You cover A-shares, US stock
 
 ## Narrative Brief Output Contract (STRICT)
 
-When running any **daily brief / digest / `/ms brief` / "昨日简报"**:
-
 ### Output structure (per asset)
-
-Each asset produces ONE narrative brief with this exact structure:
 
 ```
 {name}（{symbol}）：{headline_point_1}，{headline_point_2}
@@ -32,44 +28,191 @@ Each asset produces ONE narrative brief with this exact structure:
 ...
 ```
 
-**Headline**: AI picks the 2 most notable facts (e.g., "资金净流出，将召开临时股东会" / "放量上涨，年报预增").
+### Headline generation rules (deterministic)
 
-**^解读** marker: always present, on its own line.
+Headline = `{name}（{symbol}）：{flow_summary}，{event_summary}`
 
-**Narrative paragraph** (ONE flowing paragraph, no bullet points):
-- Latest price + change%
-- Date
-- Main fund flow: direction + amount(万元) + ratio of total turnover
-- 主力 vs 散户 direction (if 主力净流出 → 散户净流入, vice versa)
-- Price vs sector: "走势与所属的{sector}板块（{sector_pct}%）{背离/同步}" (omit if sector unavailable)
-- Volume context + 量比
+**flow_summary** (from f137):
+- f137 < 0 and |f137| >= 500万 → "主力资金净流出"
+- f137 > 0 and f137 >= 500万 → "主力资金净流入"
+- |f137| < 500万 → "资金面波动不大"
+- f137 unavailable → "资金面暂缺"
 
-**Event paragraphs** (each notable event as its own paragraph, max 5):
-- Format: `{date_prefix}，{event_details}。`
-- Merge events from announcements (CNINFO) and news (GDELT)
-- If no events → one line: "近期暂无重要公告或新闻。"
+**event_summary** (from CNINFO/GDELT results):
+- Contains "临时股东会" or "股东会" → "将召开(临时)股东会"
+- Contains "债券" or "科创债" or "发行" → "发行{type}债"
+- Contains "投资" or "战略投资" → "战略投资{target}"
+- Contains "业绩" or "预增" or "预减" → "业绩{方向}"
+- Multiple events → pick the most imminent/impactful one
+- No events → "暂无重大公告"
+
+### ^解读 narrative paragraph (ONE paragraph, no bullets)
+
+Weave ALL of these into a single flowing paragraph:
+1. "最新价格：{price}元（{pct}%），{M}月{D}日，"
+2. "{name}主力资金{净流入/净流出}{abs_f137_wan}万元，占总成交额{ratio}%。"
+3. "主力资金呈{净流入/净流出}状态，散户资金呈现{inverse}。"
+4. "{price_movement_description}，走势与所属的{sector}板块（{sector_pct}%）{背离/同步}。" (omit if sector unavailable)
+5. "交易量{较前一交易日有所活跃/萎缩/持平}，量比为{f50}。"
+
+**占成交额比例 calculation**: `ratio = abs(f137) / f48 * 100`. Or use f193 directly if available.
+
+**散户方向**: always inverse of 主力. If 主力净流出 → 散户净流入.
+
+### Event paragraphs
+
+Each event from CNINFO + GDELT as its own paragraph:
+- `公司拟于{date}{event_details}。`
+- `{date}，公司{event_details}。`
+- Max 5 paragraphs
+- If no events → "近期暂无重要公告或新闻。"
 - If source fails → "公告/新闻数据源暂不可达。"
 
-### Output allowlist (MUST)
+### Output allowlist
 
-- **Mode A**: ONLY the narrative brief text (exact structure above). Nothing before. Nothing after.
-- **Mode B**: curl POST narrative as Feishu card, output NOTHING to chat.
+- **Mode A**: ONLY the narrative text. Nothing before. Nothing after.
+- **Mode B**: curl POST as Feishu card, NOTHING to chat.
 
-### Forbidden (NEVER)
+### ANTI-EXAMPLE (DO NOT produce this format)
 
-- Bullet-point lists ("- 收盘价：…", "- 涨跌幅：…")
-- Structured section headers ("**收盘数据**", "**投研要点**", "**证据**")
-- Evidence labels visible in output (E1/E2/E3)
-- "异动提醒/监控已开启/阈值" status lines
-- "以上内容由 AI 生成" disclaimers
-- Run logs ("Loaded…", "Triggers:0")
-- Questions of any kind
+```
+[收盘] 均普智能(688306) | 2026-02-25 | -0.56%        ← WRONG
+收盘数据                                               ← WRONG
+- 收盘价：10.70元                                      ← WRONG
+- 涨跌幅：-0.56%                                       ← WRONG
+关键事件/公告（最多3条）                                 ← WRONG
+近30天未检索到可用公告（数据源暂未接入）（E2）            ← WRONG
+证据（可追溯）                                          ← WRONG
+E1 行情：https://...                                    ← WRONG
+```
 
-### Mandatory side effects (same run, no exceptions)
+If your output looks ANYTHING like the above, you are violating the contract. Re-read this section and use the narrative template.
 
-1. Push to Feishu (message tool or curl)
-2. Save brief markdown to `{baseDir}/data/briefs/YYYY-MM-DD/{asset_id}.md`
-3. Save EvidencePack JSON to `{baseDir}/data/evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`
+### Mandatory side effects (same run)
+
+1. Push to Feishu
+2. Save `{baseDir}/data/briefs/YYYY-MM-DD/{asset_id}.md`
+3. Save `{baseDir}/data/evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`
+
+---
+
+## CN_A Brief Generation Recipe (follow steps IN ORDER)
+
+For each CN_A asset, execute these steps sequentially. Do NOT skip any step.
+
+### Step 1: Fetch E1a — K-line (OHLC + amount + turnover)
+
+```
+GET https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&klt=101&fqt=1&end=20500101&lmt=3&fields1=f1,f2,f3,f4,f5,f6,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61
+```
+
+Response `data.klines` = array of strings: `"date,open,close,high,low,volume,amount,amplitude,change_pct,change_amount,turnover"`
+
+Extract from the LAST kline entry: date, open, close(=price), high, low, volume, amount(元), turnover%.
+
+### Step 2: Fetch E1b — Real-time snapshot + fund flow + 量比
+
+```
+GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86
+```
+
+Extract:
+- **f137** → main net inflow (元). Convert: `/1e4` = 万元. Sign determines direction.
+- **f193** → main net ratio (%). May need `/100` if raw value >10.
+- **f50** → 量比 (volume ratio). May need `/100` if raw value >10.
+- **f48** → amount (元). Use to calculate ratio if f193 unavailable.
+
+Calculate:
+- `main_net_wan = abs(f137) / 10000` (万元)
+- `main_ratio = f193` OR `abs(f137) / f48 * 100` (%)
+- `main_direction`: f137 > 0 → "净流入", f137 < 0 → "净流出"
+- `retail_direction`: inverse of main_direction
+
+**If push2 stock/get fails or f137 is missing**: narrative says "资金面数据暂缺", omit flow sentence.
+
+### Step 3: Fetch E2 — CNINFO announcements (MUST attempt)
+
+```
+POST https://www.cninfo.com.cn/new/hisAnnouncement/query
+Content-Type: application/x-www-form-urlencoded
+
+stock={code}&tabName=fulltext&pageSize=10&pageNum=1&category=&seDate={30d_ago}~{7d_ahead}
+```
+
+Date format: `YYYY-MM-DD` (e.g., `seDate=2026-01-26~2026-03-04`).
+
+Response JSON: `announcements` array. Each has `announcementTitle`, `announcementTime` (ms), `adjunctUrl`.
+
+Processing:
+1. Extract `announcementTitle` from each
+2. Filter by keywords: 股东会, 临时股东会, 募投, 募集资金, 关联交易, 债券, 科创债, 发行, 投资, 战略投资, 对外投资, 分红, 业绩, 年报, 季报
+3. Take top 3 matching titles
+4. Each becomes an event paragraph
+
+**If CNINFO request fails** (HTTP error, timeout, blocked):
+- Narrative: event paragraph says "公告数据暂不可达（请求失败）。"
+- EvidencePack: E2 `status="unavailable"`, `attempted_url="https://www.cninfo.com.cn/new/hisAnnouncement/query"`, `error="{HTTP status or error message}"`
+
+**If CNINFO returns empty** (no matching announcements):
+- Narrative: "近期暂无重要公告。"
+- EvidencePack: E2 `status="ok"`, note "0 matching results"
+
+### Step 4: Fetch E3 — News from GDELT (MUST attempt)
+
+```
+GET https://api.gdeltproject.org/api/v2/doc/doc?query={q}&mode=artlist&format=json&maxrecords=5&timespan=1week
+```
+
+CN_A query: `q=("均普智能" OR "688306")` (URL-encode the quotes and Chinese characters).
+
+Response JSON: `articles` array. Each has `title`, `url`, `seendate`.
+
+Pick top 1-3 articles. Each becomes an event paragraph (or merge with CNINFO events).
+
+**If GDELT fails**: try `web_search "{name} {code} 最新消息"` as fallback. If both fail:
+- Narrative: "暂无近期相关新闻。"
+- EvidencePack: E3 `status="unavailable"`, `attempted_url` + `error`
+
+### Step 5: Build headline
+
+Apply headline generation rules (above) using f137 and event titles from Steps 3-4.
+
+### Step 6: Write narrative paragraph
+
+Fill the template using data from Steps 1-2. ALL values must come from actual fetched data — never fabricate numbers.
+
+### Step 7: Write event paragraphs
+
+Combine events from Steps 3-4. Deduplicate. Order by date (most recent first). Max 5.
+
+### Step 8: Push + Save
+
+1. Assemble full narrative text (headline + ^解读 + paragraph + events)
+2. Push to Feishu (Mode A: message tool, Mode B: curl card JSON)
+3. Save brief to `{baseDir}/data/briefs/YYYY-MM-DD/{asset_id}.md`
+4. Save EvidencePack to `{baseDir}/data/evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`
+
+---
+
+## US Brief Generation Recipe
+
+### Step 1: Fetch quote
+Use Stooq CSV: `https://stooq.com/q/l/?s={symbol}.us&f=sd2t2ohlcv&h&e=csv`
+Or Yahoo Finance. Extract: date, open, high, low, close, volume.
+
+### Step 2: Fetch events/news
+GDELT: `q=("{symbol}" OR "{company_name}")` + `web_search` as fallback.
+
+### Step 3-5: Same as CN_A (headline, narrative, events, push+save)
+
+## CRYPTO Brief Generation Recipe
+
+### Step 1: Fetch quote
+CoinGecko: `https://api.coingecko.com/api/v3/simple/price?ids={id}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_market_cap=true`
+
+### Step 2-5: Same pattern (GDELT for news, assemble, push, save)
+
+---
 
 ## Architecture
 
@@ -96,80 +239,6 @@ Base dir: `{baseDir}`
 - `{baseDir}/outbox/feishu/<ts>_<id>.json` — delivery log
 - `{baseDir}/logs/monitor-YYYYMMDD.log` — debug logs (NOT chat)
 
-## Data Providers
-
-Auto-detect: 6-digit numeric → `CN_A`, alphabetic 1-5 → `US`, crypto tickers → `CRYPTO`.
-
-### CN_A — 东方财富 push2 (quote + flow)
-
-**One-call URL** (includes 量比 f50):
-```
-https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86
-```
-
-`{secid}`: `1.{code}` for SH (600/601/603/605/688), `0.{code}` for SZ (000/002/300).
-
-| Field | Meaning | Conversion |
-|---|---|---|
-| f57 | Code | — |
-| f58 | Name | — |
-| f43 | Price | 分→/100=元 (skip if already reasonable) |
-| f170 | Change% | 1/100%→/100=% |
-| f44 | High | 分→/100 |
-| f45 | Low | 分→/100 |
-| f46 | Open | 分→/100 |
-| f47 | Volume | 股 |
-| f48 | Amount | 元→/1e8=亿元, →/1e4=万元 |
-| f50 | 量比 (volume ratio) | /100 if >10, else as-is |
-| f168 | Turnover% | 1/100%→/100=% |
-| f137 | Main net inflow | 元→/1e4=万元; >0=净流入, <0=净流出 |
-| f193 | Main net ratio | 1/100%→/100=% |
-| f86 | Timestamp | Unix sec → HH:MM CST |
-
-**散户方向推断**: if 主力净流出 → 散户净流入 (vice versa). This is a simplification — state it as observed direction, not absolute truth.
-
-### CN_A — Sector comparison (optional but preferred)
-
-To include "走势与所属的{sector}板块（{sector_pct}%）{背离/同步}", try:
-1. Identify the stock's sector from eastmoney stock page or web_search
-2. Get today's sector change% from eastmoney sector data
-3. Compare: same direction = 同步, opposite = 背离
-If sector data unavailable → omit the sector sentence from the narrative. Do NOT block or fail.
-
-### CN_A — 巨潮资讯 CNINFO (events/announcements)
-
-POST `https://www.cninfo.com.cn/new/hisAnnouncement/query`:
-```
-stock={code}&tabName=fulltext&pageSize=10&pageNum=1&category=&seDate={30d_ago}~{7d_ahead}
-```
-Filter: 股东会, 募投, 关联交易, 债券, 融资, 投资, 分红, 业绩.
-
-### News — GDELT Doc 2.0 (no API key needed)
-
-```
-https://api.gdeltproject.org/api/v2/doc/doc?query={q}&mode=artlist&format=json&maxrecords=5&timespan=1week
-```
-
-Query examples:
-- CN_A: `q=("均普智能" OR "688306")`
-- US: `q=("AAPL" OR "Apple Inc")`
-- CRYPTO: `q=("Bitcoin" OR "BTC")`
-
-Pick top 1-3 titles. Merge with CNINFO events into the event paragraphs.
-
-### US — Yahoo Finance (quote) + GDELT/web_search (events/news)
-
-### CRYPTO — CoinGecko (quote) + GDELT/web_search (news)
-
-### Evidence gathering priority
-
-1. Deterministic APIs (东方财富 push2, CoinGecko) — tier 1
-2. CNINFO — tier 1
-3. GDELT — tier 1.5 (no key needed)
-4. `web_search` — tier 2
-5. `browser` — tier 3
-6. All fail → degradation text + record `attempted_url` in EvidencePack
-
 ## Secrets (NEVER print)
 
 | Variable | Required | Purpose |
@@ -193,15 +262,13 @@ Detect and test channel. Save to `data/config.json`.
 Text or image → positions. Auto-detect market. Auto-create watch rules.
 
 ### `/ms watch add`
-- `push_policy`: `"brief_only"` | `"on_trigger"` | `"both"` (stocks=`"both"`, crypto=`"on_trigger"`)
+- `push_policy`: `"brief_only"` | `"on_trigger"` | `"both"`
 - `digest_time`: CN_A=`"15:00"`, US=`"16:05"`, CRYPTO=`null`
 
 ### `/ms brief <symbol>`
-Generate and push a **narrative brief** immediately. Follow Output Contract strictly.
+Execute the Brief Generation Recipe for this symbol's market. Follow Output Contract strictly.
 
 ### `/ms digest start`
-
-ALL digest crons `--no-deliver`. Push happens inside the job.
 
 **CN_A:**
 ```bash
@@ -211,7 +278,7 @@ openclaw cron add \
   --tz "Asia/Shanghai" \
   --session isolated \
   --no-deliver \
-  --message "OUTPUT ONLY narrative briefs. No bullet lists. No section headers. No status lines. No questions. Read {baseDir}/SKILL.md. For each CN_A symbol: 1) fetch quote from push2 (include f50 量比) 2) fetch events from CNINFO 3) fetch news from GDELT 4) write narrative brief per template (headline + ^解读 + paragraph + events) 5) push to Feishu 6) save brief.md + EvidencePack." \
+  --message "Read {baseDir}/SKILL.md. For each CN_A symbol, follow 'CN_A Brief Generation Recipe' step by step: Step1 push2his kline, Step2 push2 stock/get (f137 f193 f50), Step3 CNINFO POST, Step4 GDELT GET, Step5 headline, Step6 narrative paragraph, Step7 event paragraphs, Step8 push Feishu + save brief.md + save EvidencePack. Output format: narrative only, NO bullet lists, NO section headers, NO [收盘] format, NO E1/E2/E3 labels." \
   --wake now
 ```
 
@@ -223,28 +290,17 @@ openclaw cron add \
   --tz "America/New_York" \
   --session isolated \
   --no-deliver \
-  --message "OUTPUT ONLY narrative briefs. No bullet lists. No section headers. Read {baseDir}/SKILL.md. For each US symbol: fetch quote, events, news, write narrative brief, push to Feishu, save." \
-  --wake now
-```
-
-**CRYPTO (optional):**
-```bash
-openclaw cron add \
-  --name "market-sentry:digest-crypto" \
-  --cron "0 0 * * *" --tz "UTC" \
-  --session isolated --no-deliver \
-  --message "OUTPUT ONLY narrative briefs. Read {baseDir}/SKILL.md. For each CRYPTO symbol: fetch, write narrative, push, save." \
+  --message "Read {baseDir}/SKILL.md. Follow 'US Brief Generation Recipe'. Output: narrative only." \
   --wake now
 ```
 
 ### `/ms watch start`
-Anomaly monitor (silent, `--no-deliver`):
 ```bash
 openclaw cron add \
   --name "market-sentry:monitor" \
   --cron "*/5 * * * *" \
   --session isolated --no-deliver \
-  --message "SILENT monitor. Read {baseDir}/SKILL.md. No triggers → log to {baseDir}/logs/ + STOP. Trigger → alert + evidence + push Feishu + outbox." \
+  --message "SILENT monitor. Read {baseDir}/SKILL.md. No triggers → log + STOP. Trigger → alert + evidence + push." \
   --wake now
 ```
 
@@ -252,36 +308,11 @@ openclaw cron add \
 Deep-dive with evidence chain.
 
 ### `/ms follow <alert_id>`
-Follow-up tracking. Auto-resolve after 24h.
+Follow-up. Auto-resolve after 24h.
 
 ---
 
-## Narrative Brief Template — CN_A
-
-### Mode A (Feishu App channel — output this text directly)
-
-```
-{name}（{symbol}）：{headline_point_1}，{headline_point_2}
-
-^解读
-
-最新价格：{price}元（{pct}%），{month}月{day}日，{name}主力资金{净流入/净流出}{main_net_wan}万元，占总成交额{main_ratio}%。主力资金呈{净流入/净流出}状态，散户资金呈现{净流入/净流出}。{price_movement}，走势与所属的{sector}板块（{sector_pct}%）{背离/同步}。交易量{volume_context}，量比为{vol_ratio}。
-
-{event_paragraph_1}
-
-{event_paragraph_2}
-
-{event_paragraph_N}
-```
-
-Rules:
-- Headline: AI-generated, 2 most notable facts, concise
-- Narrative: single flowing paragraph, no line breaks within
-- Each event: its own paragraph with date prefix + details
-- Omit sector sentence if data unavailable
-- No bullets, no headers, no evidence tags, no disclaimer
-
-### Mode B (Feishu Interactive Card JSON)
+## Mode B — Feishu Interactive Card JSON
 
 ```json
 {
@@ -297,7 +328,7 @@ Rules:
         "tag": "div",
         "text": {
           "tag": "lark_md",
-          "content": "**^解读**\n\n最新价格：{price}元（{pct}%），{date}，{name}主力资金{direction}{amount}万元，占总成交额{ratio}%。主力资金呈{main_dir}状态，散户资金呈现{retail_dir}。{price_context}，走势与所属的{sector}板块（{sector_pct}%）{diverge}。交易量{vol_ctx}，量比为{vol_ratio}。\n\n{event_paragraphs_joined_by_newlines}"
+          "content": "**^解读**\n\n{narrative_paragraph}\n\n{event_paragraphs}"
         }
       }
     ]
@@ -305,65 +336,43 @@ Rules:
 }
 ```
 
-Header color (A-share): `"red"` = up, `"green"` = down, `"grey"` = flat (<0.1%).
-
-### Narrative Brief Template — US
-
-```
-{name}（{symbol}）：{headline}
-
-^Briefing
-
-Price: ${price} ({pct}%), {date}. {volume_context}. Intraday range ${low}–${high}.
-
-{event_paragraph_1}
-
-{event_paragraph_2}
-```
-
-### Narrative Brief Template — CRYPTO
-
-```
-{name}（{symbol}）：{headline}
-
-^Briefing
-
-Price: ${price} ({pct}%), {date}. 24h volume: ${vol}. Market cap: ${mcap}.
-
-{event_paragraph_1}
-
-{event_paragraph_2}
-```
+Header color (A-share): `"red"` = up, `"green"` = down, `"grey"` = flat.
 
 ---
 
-## EvidencePack (MANDATORY — internal, not shown in brief)
+## EvidencePack (MANDATORY — internal, not in brief output)
 
 Path: `{baseDir}/data/evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`
-
-The brief does NOT display evidence labels. Evidence is saved behind the scenes for audit.
 
 ```json
 {
   "pack_id": "B-{asset_id}-{YYYY-MM-DD}",
   "type": "narrative_brief",
-  "asof": "{iso_timestamp}",
-  "asset": { "market": "{CN_A|US|CRYPTO}", "symbol": "{symbol}", "name": "{name}" },
+  "asof": "{iso}",
+  "asset": { "market": "{market}", "symbol": "{symbol}", "name": "{name}" },
   "evidences": [
     {
-      "evidence_id": "E1",
-      "source_type": "quote",
+      "evidence_id": "E1a",
+      "source_type": "kline",
       "status": "ok",
-      "url_or_id": "{push2_url_or_yahoo_or_coingecko}",
+      "url_or_id": "https://push2his.eastmoney.com/...",
       "retrieved_at": "{iso}",
-      "excerpt": "{key_numbers}"
+      "excerpt": "close=10.52 pct=-1.68% amount=1.25亿"
+    },
+    {
+      "evidence_id": "E1b",
+      "source_type": "flow_snapshot",
+      "status": "ok|unavailable",
+      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/get?...",
+      "retrieved_at": "{iso}",
+      "excerpt": "f137=-15417300 f193=-12.35 f50=1.70"
     },
     {
       "evidence_id": "E2",
       "source_type": "announcement",
       "status": "ok|unavailable",
       "url_or_id": "{cninfo_url}",
-      "attempted_url": "{what_was_tried}",
+      "attempted_url": "stock=688306&seDate=...",
       "error": "{if_failed}",
       "retrieved_at": "{iso}"
     },
@@ -372,7 +381,7 @@ The brief does NOT display evidence labels. Evidence is saved behind the scenes 
       "source_type": "news",
       "status": "ok|unavailable",
       "url_or_id": "{gdelt_url}",
-      "attempted_url": "{query_that_was_tried}",
+      "attempted_url": "query=(\"均普智能\" OR \"688306\")",
       "error": "{if_failed}",
       "retrieved_at": "{iso}"
     }
@@ -381,20 +390,19 @@ The brief does NOT display evidence labels. Evidence is saved behind the scenes 
 }
 ```
 
-**E2 and E3 MUST exist even if retrieval failed**: `"status": "unavailable"` + `attempted_url` + `error`.
+**E1b, E2, E3 MUST exist even if failed**: `status="unavailable"` + `attempted_url` + `error`.
 
 ---
 
 ## Degradation rules
 
-| Source | If fail | Brief action | EvidencePack |
+| Source | If fail | Narrative action | EvidencePack |
 |---|---|---|---|
-| 东方财富 push2 | Error | Fallback web_search; still fails → "行情数据暂不可获取" | E1 unavailable |
-| CNINFO | Fail/empty | Event paragraph: "近期暂无重要公告。" | E2 unavailable + attempted_url |
-| GDELT/news | Fail/empty | Event paragraph: "暂无近期相关新闻。" | E3 unavailable + attempted_url |
-| Fund flow (f137) | Missing | Omit flow sentence from narrative | noted in E1 |
-| Sector | Unavailable | Omit sector sentence | — |
-| 量比 (f50) | Missing | Omit 量比 sentence | — |
+| push2his kline | Error | "行情数据暂不可获取" | E1a unavailable |
+| push2 stock/get | Error | Omit flow+量比 sentences: "资金面数据暂缺" | E1b unavailable |
+| CNINFO | Fail/empty | "近期暂无重要公告。" or "公告数据源暂不可达。" | E2 unavailable |
+| GDELT/news | Fail/empty | "暂无近期相关新闻。" | E3 unavailable |
+| Sector | Unavailable | Omit sector sentence (no error text needed) | — |
 
 **Brief MUST be pushed even with degraded data.** Never block on a single source.
 
@@ -407,7 +415,7 @@ No briefs. No chat output. `--no-deliver`.
 - No trigger → log to `logs/monitor-YYYYMMDD.log`, STOP
 - Trigger → alert + evidence + push Feishu + outbox
 
-Rolling price cache: per-asset `points` array (30min). Append + prune each run.
+Rolling price cache: per-asset `points` array (30min). Append + prune.
 
 Cold start: empty → K-line or baseline → skip trigger → log.
 
@@ -422,7 +430,7 @@ Cold start: empty → K-line or baseline → skip trigger → log.
 
 ## Explanation policy (STRICT)
 
-- Every claim (in EvidencePack) cites evidence_id(s)
+- Every claim cites evidence_id(s)
 - No evidence → `"unconfirmed"`
 - Never fabricate
 - Confidence: `高`/`中`/`低`
