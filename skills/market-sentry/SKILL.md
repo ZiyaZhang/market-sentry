@@ -147,20 +147,25 @@ Use the **LAST** entry. Extract: date, close(=price), change_pct, high, low, amo
 
 **This step is MANDATORY.** Without it you will output "资金面数据暂缺" which is WRONG.
 
+**IMPORTANT**: Use `push2his` (historical), NOT `push2` (real-time). The real-time endpoint only returns TODAY's data. For "昨日简报" you NEED the historical endpoint which returns multiple days.
+
 ```
-https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid={secid}&klt=101&lmt=1&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
+https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid={secid}&klt=101&lmt=5&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
 ```
 
-Response: `data.klines` array. Each line = `"date,主力净流入,小单净流入,中单净流入,大单净流入,超大单净流入"` (all in 元).
-Use the **LAST** entry. Column 1 (index after date) = 主力净流入 (元).
+Response: `data.klines` array. Each line = `"date,主力净流入,小单净流入,中单净流入,大单净流入,超大单净流入,主力净占比%,小单净占比%"` (流入 in 元, 占比 in %).
+Returns last 5 trading days. Pick the entry matching your target date (same date as the kline entry you're using from Step 1).
+
+Column 1 (after date) = 主力净流入 (元).
+Column 6 = 主力净占比 (%, already calculated, can use directly as `ratio_pct`).
 
 Calculate:
 - `main_net_wan = abs(column1) / 10000` (万元)
 - `direction`: column1 > 0 → "净流入", < 0 → "净流出"
-- `ratio_pct = abs(column1) / amount_from_Step1 * 100`
+- `ratio_pct`: use column6 directly (it's already a percentage), OR `= abs(column1) / amount_from_Step1 * 100`
 - `retail_direction`: inverse of main (主力净流出 → 散户净流入)
 
-**Example**: column1 = `-28839300` → 主力净流出 `2883.93` 万元, ratio = `2883.93*10000/143000000*100` = `20.17%`
+**Example** (688306 on 2026-02-26): `"2026-02-26,-28839271.0,..."` → 主力净流出 `2883.93` 万元, 占比 `-20.15%`
 
 ### Step 3: Fetch Snapshot — 量比 (vol_ratio)
 

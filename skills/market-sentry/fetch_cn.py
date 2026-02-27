@@ -108,9 +108,10 @@ try:
 except Exception as e:
     errors.append(f"snapshot parse: {e}")
 
-# ── 3) Fund flow (fflow) — PRIMARY source for 主力净流入 ──
-raw = fetch(f"https://push2.eastmoney.com/api/qt/stock/fflow/kline/get"
-            f"?secid={SECID}&klt=101&lmt=3"
+# ── 3) Fund flow (fflow) — HISTORICAL endpoint for 主力净流入 ──
+# push2his (historical) returns multiple days; push2 (real-time) only returns today.
+raw = fetch(f"https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+            f"?secid={SECID}&klt=101&lmt=5"
             f"&fields1=f1,f2,f3,f7"
             f"&fields2=f51,f52,f53,f54,f55,f56,f57,f58")
 fflow = None
@@ -123,16 +124,19 @@ try:
         for line in d.get("data", {}).get("klines", []):
             p = line.split(",")
             main_net = float(p[1])
+            ratio_from_api = float(p[6]) if len(p) > 6 else None
             entry = dict(
                 date=p[0],
                 main_net_yuan=main_net,
                 main_net_wan=round(abs(main_net) / 10000, 2),
                 direction="净流入" if main_net >= 0 else "净流出",
             )
+            if ratio_from_api is not None:
+                entry["ratio_pct"] = round(abs(ratio_from_api), 2)
             fflow_history.append(entry)
         if fflow_history:
             fflow = fflow_history[-1]
-            if kline and kline["amount"] > 0:
+            if "ratio_pct" not in fflow and kline and kline["amount"] > 0:
                 fflow["ratio_pct"] = round(abs(fflow["main_net_yuan"]) / kline["amount"] * 100, 2)
 except Exception as e:
     errors.append(f"fflow parse: {e}")
