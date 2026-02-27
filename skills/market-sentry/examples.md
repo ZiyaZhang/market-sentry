@@ -50,24 +50,34 @@ AAPL 100
 
 **User:** `/ms brief 688306`
 
-**Agent pushes to Feishu and saves brief + EvidencePack. Output (Mode A):**
+**Agent execution steps (internal, not shown to user):**
+
+1. Runs: `python3 {baseDir}/fetch_cn.py 688306`
+2. Reads: `{baseDir}/data/fetched/688306.json`
+3. JSON contains:
+   - `kline.close=10.50, kline.change_pct=-1.87, kline.amount=143000000, kline.turnover_pct=1.11`
+   - `fflow.main_net_wan=2883.93, fflow.direction="净流出", fflow.ratio_pct=20.15`
+   - `snapshot.vol_ratio=1.45`
+   - `news_relevant: [{title:"均普智能：2亿元科创债完成发行", date:"2026-02-12"}, ...]`
+   - `boards_top20: [{name:"自动化设备", change_pct:1.93}, ...]`
+4. Builds narrative from JSON data
+
+**Agent output (Mode A — this is the ONLY thing shown):**
 
 > 均普智能（688306）：资金净流出，将召开临时股东会
 >
 > ^解读
 >
-> 最新价格：10.52元（-1.68％），2月25日，均普智能主力资金净流出1541.73万元，占总成交额12.35%。主力资金呈净流出状态，散户资金呈现净流入。股价小幅下跌，走势与所属的自动化设备板块（+1.93%）存在背离。交易量较前一交易日有所活跃，量比为1.70。
+> 最新价格：10.50元（-1.87％），2月26日，均普智能主力资金净流出2883.93万元，占总成交额20.15%。主力资金呈净流出状态，散户资金呈现净流入。股价小幅下跌，走势与所属的自动化设备板块（+1.93%）存在背离。交易量较前一交易日有所活跃，量比为1.45。
 >
 > 公司拟于2月27日召开2026年第一次临时股东会，审议调整募投项目闲置场地用途、预计年度日常关联交易等多项议案。
->
-> 2月13日，公司作为产业投资方，战略投资具身智能数据平台觅蜂科技，布局具身智能数据新基建。
 >
 > 2月12日，公司在银行间市场成功发行全国首单AI+人形机器人研发领域科创债，发行规模2亿元，票面利率2.49%。
 
 Side effects (not visible in output):
 - Pushed to Feishu via message tool
-- Saved: `data/briefs/2026-02-25/688306.md`
-- Saved: `data/evidence_packs/B-688306-2026-02-25/v1.json`
+- Saved: `data/briefs/2026-02-26/688306.md`
+- Saved: `data/evidence_packs/B-688306-2026-02-26/v1.json`
 
 ---
 
@@ -136,19 +146,25 @@ Later, BTC surges +6.2% in 5 minutes. Agent pushes to Feishu:
 
 ## Example 7: Digest with degraded data
 
-**Agent runs digest-cn cron at 15:00. One asset has no CNINFO results and GDELT fails:**
+**Agent runs digest-cn cron at 15:00. fetch_cn.py returns partial data:**
 
-> 某某科技（300XXX）：缩量微涨，无近期重大公告
+Agent runs `python3 fetch_cn.py 300XXX` → JSON shows:
+- `status.fflow: "failed"`, `status.news: "empty"`
+- `kline` and `snapshot` are ok
+
+Output:
+
+> 某某科技（300XXX）：资金面数据暂缺，暂无重大公告
 
 > ^解读
 >
-> 最新价格：25.30元（+0.42%），2月25日，某某科技主力资金净流入203.5万元，占总成交额1.8%。主力资金呈小幅净流入状态，散户资金呈现净流出。交易量较前日有所萎缩，量比为0.85。
+> 最新价格：25.30元（+0.42%），2月25日，资金面数据暂缺。交易量较前日有所萎缩，量比为0.85。
 >
 > 近期暂无重要公告或新闻。
 
 Side effects:
-- EvidencePack saved with E2 status="unavailable", attempted_url="https://www.cninfo.com.cn/...", error="empty result"
-- E3 status="unavailable", attempted_url="https://api.gdeltproject.org/...", error="timeout"
+- EvidencePack saved with E1c status="unavailable", error from `errors` array in JSON
+- E2+E3 status="unavailable", attempted_url="https://search-api-web.eastmoney.com/..."
 
 ---
 

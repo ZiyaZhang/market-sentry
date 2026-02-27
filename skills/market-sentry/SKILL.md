@@ -129,97 +129,89 @@ If your output looks ANYTHING like the above, you are violating the contract. Re
 
 For each CN_A asset, execute these steps sequentially. Do NOT skip any step.
 
-### Step 1: Fetch E1a — K-line (OHLC + amount + turnover)
+### ⚠️ Step 0: Run the data fetcher script (MANDATORY)
 
-```
-GET https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&klt=101&fqt=1&end=20500101&lmt=3&fields1=f1,f2,f3,f4,f5,f6,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61
-```
+**You MUST run this script FIRST.** Do NOT try to fetch APIs yourself — use the script.
 
-Response `data.klines` = array of strings: `"date,open,close,high,low,volume,amount,amplitude,change_pct,change_amount,turnover"`
-
-Extract from the LAST kline entry: date, open, close(=price), high, low, volume, amount(元), turnover%.
-
-### Step 2: Fetch E1b — Snapshot + 量比 (push2 stock/get)
-
-```
-GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f86
+```bash
+python3 {baseDir}/fetch_cn.py {code}
 ```
 
-Extract **f50** (量比). May need `/100` if raw value >10.
+This script fetches ALL data sources (kline, snapshot, fund flow, news, sector boards) and saves the result to `{baseDir}/data/fetched/{code}.json`.
 
-### Step 2b: Fetch E1c — Fund flow (fflow kline/get, PRIMARY source for 主力资金)
+**After running**, read the output file:
 
-This is the **dedicated fund flow endpoint** — more reliable than f137 from stock/get.
-
-```
-GET https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid={secid}&klt=101&lmt=1&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
+```bash
+cat {baseDir}/data/fetched/{code}.json
 ```
 
-Response `data.klines` = array of `"date,主力净流入,小单净流入,中单净流入,大单净流入,超大单净流入"` (元).
+The JSON contains:
+- `kline` — OHLCV + change% + turnover% (latest day)
+- `kline_history` — last 5 days of kline data
+- `snapshot` — real-time price, f50 (量比), f137/f193 (fallback fund flow)
+- `fflow` — fund flow: main_net_yuan, main_net_wan, direction, ratio_pct
+- `fflow_history` — last 3 days fund flow
+- `news_all` — all search results (title, date, url)
+- `news_relevant` — filtered by event keywords (股东会, 债券, 投资, etc.)
+- `boards_top20` — top 20 industry boards with change%
+- `status` — ok/failed for each source
+- `errors` — any error messages
 
-Extract from the LAST entry:
-- **Column 1** (主力净流入, 元) → `main_net`. `/1e4` = 万元.
-- Sign: >0 = 净流入, <0 = 净流出.
+**If the script fails to run** (e.g., python3 not found), fall back to manual fetching using Steps 1-3 below. But ALWAYS try the script first.
 
-Calculate:
-- `main_net_wan = abs(main_net) / 10000` (万元)
-- `main_ratio = abs(main_net) / amount_from_Step1 * 100` (占成交额%)
-- `main_direction`: >0 → "净流入", <0 → "净流出"
-- `retail_direction`: inverse of main (主力净流出 → 散户净流入)
+### Step 1: Read kline data from JSON
 
-**Fallback**: if fflow fails, try f137/f193 from push2 stock/get (add f137,f193 to Step 2 fields). If both fail → "资金面数据暂缺".
+From `{code}.json` → `kline`:
+- `date`, `close` (=price), `change_pct`, `high`, `low`, `amount` (元), `turnover_pct`
+- `amount` is in 元. To display: `/1e8` = 亿元, or `/1e4` = 万元.
 
-### Step 2c: Fetch sector board data (clist/get, for 板块背离/同步)
+### Step 2: Read snapshot + fund flow from JSON
 
-```
-GET https://push2.eastmoney.com/api/qt/clist/get?fs=m:90+t:2&fields=f2,f3,f12,f14&fid=f3&pn=1&pz=50&po=1
-```
+From `{code}.json` → `snapshot`:
+- `vol_ratio` = f50 量比
+- `name` = stock name
 
-Response: industry board list. `f14` = board name, `f3` = change% (today).
+From `{code}.json` → `fflow`:
+- `main_net_wan` = 主力净流入/流出（万元）
+- `direction` = "净流入" or "净流出"
+- `ratio_pct` = 占成交额百分比
 
-Process:
-1. Look up which board the stock belongs to (check watch_rules `sector` field, or search board names for a match).
-2. Find that board's `f3` change%.
-3. Compare: stock up + board up = 同步; stock down + board up = 背离; etc.
+Calculate for narrative:
+- `main_direction`: from `fflow.direction`
+- `retail_direction`: inverse (主力净流出 → 散户净流入)
+- If `fflow` is null, try `snapshot.f137` as fallback. If both null → "资金面数据暂缺"
 
-**If sector unknown or API fails** → omit the sector sentence from narrative. Do NOT block.
+### Step 2c: Read sector board data from JSON
 
-### Step 3: Fetch E2+E3 — Announcements + News from 东方财富搜索 API
+From `{code}.json` → `boards_top20`:
+- Look up which board the stock belongs to (check watch_rules `sector` field, or search board names)
+- Compare stock change vs board change: same direction = 同步, opposite = 背离
+- If no match → omit sector sentence
 
-**This replaces both CNINFO and GDELT.** One request covers announcements AND news.
+### Step 3: Read news/events from JSON
 
-CNINFO requires orgId (not just stock code) and GDELT has strict rate limits + no Chinese A-share coverage. 东方财富搜索 API works reliably.
+From `{code}.json` → `news_relevant` (pre-filtered by event keywords):
+- Each has `title`, `date`, `url`
+- Use these directly as event paragraphs
 
-```
-GET https://search-api-web.eastmoney.com/search/jsonp?cb=jQuery&param={"uid":"","keyword":"{code}","type":["cmsArticleWebOld"],"client":"web","clientType":"web","clientVersion":"curr","param":{"cmsArticleWebOld":{"searchScope":"default","sort":"default","pageIndex":1,"pageSize":10}}}
-```
+From `{code}.json` → `news_all` (unfiltered):
+- Can scan for additional relevant items missed by keyword filter
 
-**IMPORTANT**: URL-encode the `param` JSON value. Headers: `User-Agent: Mozilla/5.0`, `Referer: https://so.eastmoney.com/`
-
-Response: JSONP wrapper `jQuery(...)`. Strip wrapper, parse JSON.
-Path: `result.cmsArticleWebOld.list[]` — each has `title`, `date`, `url`, `mediaName`.
-
-Processing:
-1. Strip `<em>` tags from titles
-2. Filter by keywords: 股东会, 临时股东会, 募投, 关联交易, 债券, 科创债, 发行, 投资, 战略投资, 分红, 业绩, 年报
-3. Take top 3-5 matching articles by date
-4. Each becomes an event paragraph: `{date}，{title_as_event_description}。`
-
-**If search API fails**: try `web_search "{name} {code} 最新消息"` as fallback. If both fail:
-- Narrative: "暂无近期相关公告或新闻。"
-- EvidencePack: E2 `status="unavailable"`, E3 `status="unavailable"`, record `attempted_url` + `error`
+If `news_relevant` is empty AND `news_all` is empty → "暂无近期相关公告或新闻。"
+If `status.news` == "empty" or has errors → "公告/新闻数据源暂不可达。"
 
 ### Step 5: Build headline
 
-Apply headline generation rules (above) using f137 and event titles from Steps 3-4.
+Apply headline generation rules (above) using fflow data and news_relevant titles.
 
 ### Step 6: Write narrative paragraph
 
-Fill the template using data from Steps 1-2. ALL values must come from actual fetched data — never fabricate numbers.
+Fill the template using data from Steps 1-2. ALL values must come from the JSON — never fabricate numbers.
 
 ### Step 7: Write event paragraphs
 
-Combine events from Steps 3-4. Deduplicate. Order by date (most recent first). Max 5.
+Use news_relevant from Step 3. Deduplicate similar titles. Order by date (most recent first). Max 5.
+Each event: `{date}，{rewrite title as sentence}。`
 
 ### Step 8: Push + Save
 
@@ -331,7 +323,7 @@ openclaw cron add \
   --tz "Asia/Shanghai" \
   --session isolated \
   --no-deliver \
-  --message "Read {baseDir}/SKILL.md. For each CN_A symbol, follow 'CN_A Brief Generation Recipe' step by step: Step1 push2his kline, Step2 push2 stock/get (f137 f193 f50), Step3 CNINFO POST, Step4 GDELT GET, Step5 headline, Step6 narrative paragraph, Step7 event paragraphs, Step8 push Feishu + save brief.md + save EvidencePack. Output format: narrative only, NO bullet lists, NO section headers, NO [收盘] format, NO E1/E2/E3 labels." \
+  --message "For each CN_A symbol in watch_rules: 1) Run: python3 {baseDir}/fetch_cn.py {code} 2) Read {baseDir}/data/fetched/{code}.json 3) Follow SKILL.md Output Contract to build narrative brief from the JSON data 4) Push to Feishu + save brief.md + save EvidencePack. STRICT: output ONLY the narrative text. NO bullet lists, NO section headers, NO [收盘] format, NO E1/E2/E3 labels." \
   --wake now
 ```
 
