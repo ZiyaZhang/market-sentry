@@ -146,15 +146,17 @@ cat {baseDir}/data/fetched/{code}.json
 ```
 
 The JSON contains:
-- `kline` — OHLCV + change% + turnover% (latest day)
+- `kline` — OHLCV + change% + turnover% (latest day). **Use this for price/pct, NOT snapshot.**
 - `kline_history` — last 5 days of kline data
-- `snapshot` — real-time price, f50 (量比), f137/f193 (fallback fund flow)
-- `fflow` — fund flow: main_net_yuan, main_net_wan, direction, ratio_pct
+- `snapshot` — stock name, vol_ratio (量比), f137/f193 (fallback fund flow)
+- `fflow` — fund flow: main_net_yuan, main_net_wan, direction, ratio_pct. **PRIMARY fund flow source.**
 - `fflow_history` — last 3 days fund flow
-- `news_all` — all search results (title, date, url)
-- `news_relevant` — filtered by event keywords (股东会, 债券, 投资, etc.)
+- `announcements` — official announcements from np-anotice API (title, date, url, categories)
+- `news_all` — search results (may be empty)
+- `news_relevant` — filtered by event keywords
+- `events_merged` — announcements + relevant news combined
 - `boards_top20` — top 20 industry boards with change%
-- `status` — ok/failed for each source
+- `status` — ok/failed/empty for each source
 - `errors` — any error messages
 
 **If the script fails to run** (e.g., python3 not found), fall back to manual fetching using Steps 1-3 below. But ALWAYS try the script first.
@@ -188,17 +190,20 @@ From `{code}.json` → `boards_top20`:
 - Compare stock change vs board change: same direction = 同步, opposite = 背离
 - If no match → omit sector sentence
 
-### Step 3: Read news/events from JSON
+### Step 3: Read announcements + news from JSON
 
-From `{code}.json` → `news_relevant` (pre-filtered by event keywords):
+**Primary** — From `{code}.json` → `announcements` (official filings from np-anotice API):
+- Each has `title` (e.g. "均普智能:2026年第一次临时股东会会议资料"), `date`, `url`, `categories`
+- Rewrite title as natural sentence for event paragraph
+
+**Secondary** — From `{code}.json` → `news_relevant` (search API, may be empty):
 - Each has `title`, `date`, `url`
-- Use these directly as event paragraphs
 
-From `{code}.json` → `news_all` (unfiltered):
-- Can scan for additional relevant items missed by keyword filter
+**Combined** — From `{code}.json` → `events_merged` (both sources merged):
+- Use this for building event paragraphs
 
-If `news_relevant` is empty AND `news_all` is empty → "暂无近期相关公告或新闻。"
-If `status.news` == "empty" or has errors → "公告/新闻数据源暂不可达。"
+If `announcements` is empty AND `news_relevant` is empty → "近期暂无重要公告或新闻。"
+If `status.announcements` == "empty" → "公告数据源暂不可达。"
 
 ### Step 5: Build headline
 

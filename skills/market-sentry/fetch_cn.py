@@ -81,7 +81,8 @@ try:
 except Exception as e:
     errors.append(f"kline parse: {e}")
 
-# ── 2) Real-time snapshot (price, f50 量比, f137/f193 fallback flow) ──
+# ── 2) Real-time snapshot (f50 量比, f137/f193 fund flow, name) ──
+# f43/f170 are unreliable (raw int encoding varies) — use kline for price/pct instead.
 raw = fetch(f"https://push2.eastmoney.com/api/qt/stock/get"
             f"?secid={SECID}"
             f"&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86")
@@ -92,17 +93,17 @@ try:
         errors.append(f"snapshot: {d['_error']}")
     else:
         dd = d.get("data", {})
-        f43 = dd.get("f43", 0) or 0
-        f170 = dd.get("f170", 0) or 0
-        f50 = dd.get("f50", 0) or 0
+        f50_raw = dd.get("f50", 0) or 0
+        vol_ratio = round(f50_raw / 100, 2) if isinstance(f50_raw, (int, float)) else 0
+        f193_raw = dd.get("f193")
+        main_pct = round(f193_raw / 100, 2) if isinstance(f193_raw, (int, float)) and f193_raw else None
         snapshot = dict(
             code=dd.get("f57", CODE),
             name=dd.get("f58", ""),
-            price=f43 / 100 if isinstance(f43, int) and f43 > 1000 else f43,
-            change_pct=f170 / 100 if isinstance(f170, int) and abs(f170) > 100 else f170,
-            vol_ratio=round(f50 / 100, 2) if isinstance(f50, int) and f50 > 10 else f50,
-            high=dd.get("f44"), low=dd.get("f45"), open=dd.get("f46"),
-            f137=dd.get("f137"), f193=dd.get("f193"),
+            vol_ratio=vol_ratio,
+            f137=dd.get("f137"),
+            f193=main_pct,
+            f48=dd.get("f48"),
         )
 except Exception as e:
     errors.append(f"snapshot parse: {e}")
@@ -136,46 +137,85 @@ try:
 except Exception as e:
     errors.append(f"fflow parse: {e}")
 
-# ── 4) News + announcements (eastmoney search API) ──
-search_param = json.dumps({
-    "uid": "", "keyword": CODE,
-    "type": ["cmsArticleWebOld"],
-    "client": "web", "clientType": "web", "clientVersion": "curr",
-    "param": {"cmsArticleWebOld": {
-        "searchScope": "default", "sort": "default",
-        "pageIndex": 1, "pageSize": 10,
-    }},
-}, ensure_ascii=False)
+# ── 4a) Announcements — np-anotice API (PRIMARY, most reliable) ──
+today_str = time.strftime("%Y-%m-%d")
+three_months_ago = time.strftime("%Y-%m-%d", time.localtime(time.time() - 90 * 86400))
 raw = fetch(
-    f"https://search-api-web.eastmoney.com/search/jsonp"
-    f"?cb=jQuery&param={quote(search_param)}",
-    headers={**HEADERS, "Referer": "https://so.eastmoney.com/"},
+    f"https://np-anotice-stock.eastmoney.com/api/security/ann"
+    f"?cb=jQuery&stock_list={CODE}&page_size=10&page_index=1"
+    f"&ann_type=A&begin_time={three_months_ago}&end_time={today_str}",
+    headers={**HEADERS, "Referer": "https://data.eastmoney.com/"},
 )
+announcements = []
+try:
+    m_ann = re.search(r"jQuery\w*\((.*)\)\s*$", raw, re.DOTALL)
+    if m_ann:
+        ad = json.loads(m_ann.group(1))
+        for item in ad.get("data", {}).get("list", [])[:15]:
+            title = item.get("title_ch", "")
+            date = (item.get("notice_date", "") or "")[:10]
+            art_code = item.get("art_code", "")
+            columns = [c.get("column_name", "") for c in item.get("columns", [])]
+            ann_url = f"https://data.eastmoney.com/notices/detail/{CODE}/{art_code}.html" if art_code else ""
+            announcements.append(dict(
+                title=title, date=date, url=ann_url,
+                art_code=art_code, categories=columns,
+            ))
+    elif "_error" in raw:
+        errors.append(f"announcements: {json.loads(raw).get('_error', 'unknown')}")
+except Exception as e:
+    errors.append(f"announcements parse: {e}")
+
+# ── 4b) News — eastmoney search API (SECONDARY, may be empty) ──
+stock_name = snapshot.get("name", "") if snapshot else ""
+search_keywords = [CODE]
+if stock_name:
+    search_keywords.append(stock_name)
+
 news = []
 event_keywords = [
     "股东会", "临时股东会", "募投", "关联交易", "债券", "科创债",
     "发行", "投资", "战略投资", "分红", "业绩", "年报", "季报",
     "人形机器人", "募集", "对外投资", "收购", "增持", "减持",
     "定增", "配股", "回购", "重组", "限售股", "解禁",
+    "财报", "预告", "快报", "营收", "利润", "分配",
 ]
-try:
-    m = re.search(r"jQuery\((.*)\)", raw)
-    if m:
-        sd = json.loads(m.group(1))
-        articles = sd.get("result", {}).get("cmsArticleWebOld", {})
-        if isinstance(articles, dict):
-            articles = articles.get("list", [])
-        for a in (articles or [])[:20]:
-            if isinstance(a, dict):
-                title = re.sub(r"<[^>]+>", "", a.get("title", ""))
-                date = (a.get("date", "") or "")[:10]
-                url = a.get("url", "")
-                relevant = any(kw in title for kw in event_keywords)
-                news.append(dict(title=title, date=date, url=url, relevant=relevant))
-    elif "_error" in raw:
-        errors.append(f"news: {json.loads(raw).get('_error','unknown')}")
-except Exception as e:
-    errors.append(f"news parse: {e}")
+seen_titles = set()
+
+for kw in search_keywords:
+    search_param = json.dumps({
+        "uid": "", "keyword": kw,
+        "type": ["cmsArticleWebOld"],
+        "client": "web", "clientType": "web", "clientVersion": "curr",
+        "param": {"cmsArticleWebOld": {
+            "searchScope": "default", "sort": "default",
+            "pageIndex": 1, "pageSize": 10,
+        }},
+    }, ensure_ascii=False)
+    raw = fetch(
+        f"https://search-api-web.eastmoney.com/search/jsonp"
+        f"?cb=jQuery&param={quote(search_param)}",
+        headers={**HEADERS, "Referer": "https://so.eastmoney.com/"},
+    )
+    try:
+        m_news = re.search(r"jQuery\w*\((.*)\)\s*$", raw, re.DOTALL)
+        if m_news:
+            sd = json.loads(m_news.group(1))
+            articles = sd.get("result", {}).get("cmsArticleWebOld", {})
+            if isinstance(articles, dict):
+                articles = articles.get("list", [])
+            for a in (articles or [])[:20]:
+                if isinstance(a, dict):
+                    title = re.sub(r"<[^>]+>", "", a.get("title", ""))
+                    if title in seen_titles:
+                        continue
+                    seen_titles.add(title)
+                    date = (a.get("date", "") or "")[:10]
+                    url = a.get("url", "")
+                    relevant = any(ek in title for ek in event_keywords)
+                    news.append(dict(title=title, date=date, url=url, relevant=relevant))
+    except Exception as e:
+        errors.append(f"news parse({kw}): {e}")
 
 # ── 5) Sector boards (top 50 industry boards) ──
 raw = fetch("https://push2.eastmoney.com/api/qt/clist/get"
@@ -191,15 +231,17 @@ try:
         for v in items:
             if isinstance(v, dict):
                 f3 = v.get("f3", 0) or 0
+                pct = round(f3 / 100, 2) if isinstance(f3, (int, float)) else 0
                 boards.append(dict(
                     name=v.get("f14", ""),
-                    change_pct=round(f3 / 100, 2) if isinstance(f3, int) and abs(f3) > 100 else f3,
+                    change_pct=pct,
                     code=v.get("f12", ""),
                 ))
 except Exception as e:
     errors.append(f"boards parse: {e}")
 
 # ── Assemble ──
+all_events = announcements + [n for n in news if n.get("relevant")]
 output = {
     "code": CODE,
     "secid": SECID,
@@ -209,14 +251,17 @@ output = {
     "snapshot": snapshot,
     "fflow": fflow,
     "fflow_history": fflow_history,
+    "announcements": announcements,
     "news_all": news,
     "news_relevant": [n for n in news if n.get("relevant")],
+    "events_merged": all_events,
     "boards_top20": boards[:20],
     "errors": errors,
     "status": {
         "kline": "ok" if kline else "failed",
-        "snapshot": "ok" if snapshot and snapshot.get("price") else "empty",
+        "snapshot": "ok" if snapshot and snapshot.get("name") else "empty",
         "fflow": "ok" if fflow else "failed",
+        "announcements": f"ok ({len(announcements)})" if announcements else "empty",
         "news": f"ok ({len(news)} articles)" if news else "empty",
         "boards": f"ok ({len(boards)} boards)" if boards else "failed",
     },
