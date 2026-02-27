@@ -127,103 +127,93 @@ If your output looks ANYTHING like the above, you are violating the contract. Re
 
 ## CN_A Brief Generation Recipe (follow steps IN ORDER)
 
-For each CN_A asset, execute these steps sequentially. Do NOT skip any step.
+For each CN_A asset, execute ALL steps. Do NOT skip any step.
 
-### ⚠️ Step 0: Run the data fetcher script (MANDATORY)
+Determine `{secid}`: code starts with 6 → `1.{code}` (SH), starts with 0/3 → `0.{code}` (SZ).
 
-**You MUST run this script FIRST.** Do NOT try to fetch APIs yourself — use the script.
+### Step 1: Fetch K-line — visit this URL
 
-```bash
-python3 {baseDir}/fetch_cn.py {code}
+```
+https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&klt=101&fqt=1&end=20500101&lmt=5&fields1=f1,f2,f3,f4,f5,f6,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61
 ```
 
-This script fetches ALL data sources (kline, snapshot, fund flow, news, sector boards) and saves the result to `{baseDir}/data/fetched/{code}.json`.
+Response: `data.klines` array. Each line = `"date,open,close,high,low,volume,amount,amplitude%,change%,change_amt,turnover%"`.
+Use the **LAST** entry. Extract: date, close(=price), change_pct, high, low, amount(元), turnover%.
+`amount` in 元: `/1e8` = 亿元.
 
-**After running**, read the output file:
+### ⚠️ Step 2: Fetch Fund Flow — YOU MUST VISIT THIS URL (资金流)
 
-```bash
-cat {baseDir}/data/fetched/{code}.json
+**This step is MANDATORY.** Without it you will output "资金面数据暂缺" which is WRONG.
+
+```
+https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid={secid}&klt=101&lmt=1&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
 ```
 
-The JSON contains:
-- `kline` — OHLCV + change% + turnover% (latest day). **Use this for price/pct, NOT snapshot.**
-- `kline_history` — last 5 days of kline data
-- `snapshot` — stock name, vol_ratio (量比), f137/f193 (fallback fund flow)
-- `fflow` — fund flow: main_net_yuan, main_net_wan, direction, ratio_pct. **PRIMARY fund flow source.**
-- `fflow_history` — last 3 days fund flow
-- `announcements` — official announcements from np-anotice API (title, date, url, categories)
-- `news_all` — search results (may be empty)
-- `news_relevant` — filtered by event keywords
-- `events_merged` — announcements + relevant news combined
-- `boards_top20` — top 20 industry boards with change%
-- `status` — ok/failed/empty for each source
-- `errors` — any error messages
+Response: `data.klines` array. Each line = `"date,主力净流入,小单净流入,中单净流入,大单净流入,超大单净流入"` (all in 元).
+Use the **LAST** entry. Column 1 (index after date) = 主力净流入 (元).
 
-**If the script fails to run** (e.g., python3 not found), fall back to manual fetching using Steps 1-3 below. But ALWAYS try the script first.
+Calculate:
+- `main_net_wan = abs(column1) / 10000` (万元)
+- `direction`: column1 > 0 → "净流入", < 0 → "净流出"
+- `ratio_pct = abs(column1) / amount_from_Step1 * 100`
+- `retail_direction`: inverse of main (主力净流出 → 散户净流入)
 
-### Step 1: Read kline data from JSON
+**Example**: column1 = `-28839300` → 主力净流出 `2883.93` 万元, ratio = `2883.93*10000/143000000*100` = `20.17%`
 
-From `{code}.json` → `kline`:
-- `date`, `close` (=price), `change_pct`, `high`, `low`, `amount` (元), `turnover_pct`
-- `amount` is in 元. To display: `/1e8` = 亿元, or `/1e4` = 万元.
+### Step 3: Fetch Snapshot — 量比 (vol_ratio)
 
-### Step 2: Read snapshot + fund flow from JSON
+```
+https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f50
+```
 
-From `{code}.json` → `snapshot`:
-- `vol_ratio` = f50 量比
-- `name` = stock name
+`f50` = 量比 (raw integer, divide by 100). Example: `f50=170` → 量比 `1.70`.
+`f58` = stock name.
 
-From `{code}.json` → `fflow`:
-- `main_net_wan` = 主力净流入/流出（万元）
-- `direction` = "净流入" or "净流出"
-- `ratio_pct` = 占成交额百分比
+### Step 4: Fetch Announcements
 
-Calculate for narrative:
-- `main_direction`: from `fflow.direction`
-- `retail_direction`: inverse (主力净流出 → 散户净流入)
-- If `fflow` is null, try `snapshot.f137` as fallback. If both null → "资金面数据暂缺"
+```
+https://np-anotice-stock.eastmoney.com/api/security/ann?cb=jQuery&stock_list={code}&page_size=10&page_index=1&ann_type=A&begin_time={90_days_ago}&end_time={today}
+```
 
-### Step 2c: Read sector board data from JSON
+Response: JSONP. Parse `data.list[]`. Each: `title_ch`, `notice_date`, `art_code`, `columns[].column_name`.
+Rewrite announcement titles as natural event sentences.
 
-From `{code}.json` → `boards_top20`:
-- Look up which board the stock belongs to (check watch_rules `sector` field, or search board names)
-- Compare stock change vs board change: same direction = 同步, opposite = 背离
-- If no match → omit sector sentence
+### Step 5: Fetch Sector Boards (optional, for 板块背离/同步)
 
-### Step 3: Read announcements + news from JSON
+```
+https://push2.eastmoney.com/api/qt/clist/get?fs=m:90+t:2&fields=f2,f3,f12,f14&fid=f3&pn=1&pz=50&po=1
+```
 
-**Primary** — From `{code}.json` → `announcements` (official filings from np-anotice API):
-- Each has `title` (e.g. "均普智能:2026年第一次临时股东会会议资料"), `date`, `url`, `categories`
-- Rewrite title as natural sentence for event paragraph
+`f14` = board name, `f3` = change% (raw int, /100). Find stock's sector, compare direction.
 
-**Secondary** — From `{code}.json` → `news_relevant` (search API, may be empty):
-- Each has `title`, `date`, `url`
+### Step 6: Build headline
 
-**Combined** — From `{code}.json` → `events_merged` (both sources merged):
-- Use this for building event paragraphs
+Apply headline generation rules (above) using fund flow data (Step 2) and announcement titles (Step 4).
 
-If `announcements` is empty AND `news_relevant` is empty → "近期暂无重要公告或新闻。"
-If `status.announcements` == "empty" → "公告数据源暂不可达。"
+### Step 7: Write narrative paragraph
 
-### Step 5: Build headline
+Weave ALL data into ONE paragraph:
+1. "最新价格：{price}元（{pct}%），{M}月{D}日，"
+2. "{name}主力资金{方向}{main_net_wan}万元，占总成交额{ratio}%。" ← **from Step 2**
+3. "主力资金呈{方向}状态，散户资金呈现{inverse}。"
+4. "走势与所属的{sector}板块（{sector_pct}%）{背离/同步}。" (omit if unavailable)
+5. "交易量{活跃/萎缩/持平}，量比为{f50}。" ← **from Step 3**
 
-Apply headline generation rules (above) using fflow data and news_relevant titles.
+### Step 8: Write event paragraphs
 
-### Step 6: Write narrative paragraph
+From Step 4 announcements. Deduplicate. Most recent first. Max 5.
+`{date}，公司{event_description}。`
 
-Fill the template using data from Steps 1-2. ALL values must come from the JSON — never fabricate numbers.
-
-### Step 7: Write event paragraphs
-
-Use news_relevant from Step 3. Deduplicate similar titles. Order by date (most recent first). Max 5.
-Each event: `{date}，{rewrite title as sentence}。`
-
-### Step 8: Push + Save
+### Step 9: Push + Save
 
 1. Assemble full narrative text (headline + ^解读 + paragraph + events)
 2. Push to Feishu (Mode A: message tool, Mode B: curl card JSON)
 3. Save brief to `{baseDir}/data/briefs/YYYY-MM-DD/{asset_id}.md`
 4. Save EvidencePack to `{baseDir}/data/evidence_packs/B-{asset_id}-{YYYY-MM-DD}/v1.json`
+
+### Optional: fetch_cn.py script
+
+If you have shell/terminal access, run `python3 {baseDir}/fetch_cn.py {code}` first. It fetches all sources and saves to `{baseDir}/data/fetched/{code}.json`. Then read that file instead of visiting URLs individually.
 
 ---
 
