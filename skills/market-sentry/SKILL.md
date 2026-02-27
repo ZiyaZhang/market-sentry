@@ -8,6 +8,36 @@ metadata: {"openclaw":{"emoji":"📈","skillKey":"market-sentry"}}
 
 You are a financial monitoring and briefing system. A-shares, US stocks, crypto.
 
+## ⚠️ MANDATORY URLs — VISIT ALL OF THESE FOR EACH STOCK ⚠️
+
+For ANY brief (single or portfolio), you MUST visit these URLs. "资金面数据暂缺" is NEVER acceptable — the data IS available at the URLs below.
+
+### 688306 均普智能
+
+| # | Data | URL |
+|---|------|-----|
+| 1 | K-line | `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.688306&klt=101&fqt=1&end=20500101&lmt=5&fields1=f1,f2,f3,f4,f5,f6,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61` |
+| 2 | **资金流** | `https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid=1.688306&klt=101&lmt=5&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58` |
+| 3 | 量比 | `https://push2.eastmoney.com/api/qt/stock/get?secid=1.688306&fields=f57,f58,f50` |
+| 4 | 公告 | `https://np-anotice-stock.eastmoney.com/api/security/ann?cb=jQuery&stock_list=688306&page_size=10&page_index=1&ann_type=A&begin_time=2025-12-01&end_time=2026-12-31` |
+
+### 600519 贵州茅台
+
+| # | Data | URL |
+|---|------|-----|
+| 1 | K-line | `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.600519&klt=101&fqt=1&end=20500101&lmt=5&fields1=f1,f2,f3,f4,f5,f6,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61` |
+| 2 | **资金流** | `https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid=1.600519&klt=101&lmt=5&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58` |
+| 3 | 量比 | `https://push2.eastmoney.com/api/qt/stock/get?secid=1.600519&fields=f57,f58,f50` |
+| 4 | 公告 | `https://np-anotice-stock.eastmoney.com/api/security/ann?cb=jQuery&stock_list=600519&page_size=10&page_index=1&ann_type=A&begin_time=2025-12-01&end_time=2026-12-31` |
+
+**Parsing URL #2 (资金流)**: `data.klines` → `"date,主力净流入(元),小单,中单,大单,超大单,主力净占比%,小单占比%"`. Pick entry matching your target date. Column 1 = 主力净流入(元), `/10000` = 万元. Column 6 = 占比%.
+
+**Parsing URL #3 (量比)**: `f50` / 100 = 量比.
+
+**Parsing URL #4 (公告)**: JSONP wrapper. `data.list[].title_ch` + `notice_date`.
+
+---
+
 ## ⚠️ OUTPUT FORMAT — READ THIS FIRST ⚠️
 
 **EVERY brief/digest/简报 MUST use this EXACT format. NO OTHER FORMAT IS ALLOWED.**
