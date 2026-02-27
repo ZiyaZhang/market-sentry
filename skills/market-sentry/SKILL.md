@@ -157,7 +157,7 @@ If your output looks ANYTHING like the above, you are violating the contract. Re
 
 ## CN_A Brief Generation Recipe (follow steps IN ORDER)
 
-**⚠️ PORTFOLIO MODE**: When generating briefs for multiple stocks (e.g. "投资组合简报"), you MUST execute ALL steps below for EACH CN_A stock separately. Do NOT batch or shortcut. Process one stock at a time: all 9 steps for stock A, then all 9 steps for stock B, etc.
+**⚠️ PORTFOLIO MODE**: When generating briefs for multiple stocks (e.g. "投资组合简报", "昨日简报"), you MUST complete ALL URLs + output for ONE stock before starting the next. Do NOT batch kline fetches for all stocks first — that causes you to skip fflow. Instead: fetch all 4 URLs for stock A → write brief A → then fetch all 4 URLs for stock B → write brief B.
 
 For each CN_A asset, execute ALL steps. Do NOT skip any step.
 
@@ -344,6 +344,18 @@ Text or image → positions. Auto-detect market. Auto-create watch rules.
 
 ### `/ms brief <symbol>`
 Execute the Brief Generation Recipe for this symbol's market. Follow Output Contract strictly.
+
+### `/ms brief portfolio` or "投资组合简报" or "昨日简报"
+
+**CRITICAL**: Do NOT try to process all stocks at once. Process ONE stock at a time, completing ALL steps (including fund flow URL #2) for each stock before moving to the next.
+
+Execute as sequential individual briefs:
+1. Run `/ms brief 688306` — visit ALL 4 URLs, generate narrative, push
+2. Run `/ms brief 600519` — visit ALL 4 URLs, generate narrative, push
+3. Run `/ms brief AAPL` — fetch quote + news, generate narrative, push
+4. Run `/ms brief BTC` — fetch quote, generate narrative, push
+
+Each stock MUST have its own complete data collection before writing its brief. Do NOT batch kline fetches first then come back for fflow — that causes "资金面数据暂缺".
 
 ### `/ms digest start`
 
