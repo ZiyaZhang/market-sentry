@@ -127,6 +127,8 @@ If your output looks ANYTHING like the above, you are violating the contract. Re
 
 ## CN_A Brief Generation Recipe (follow steps IN ORDER)
 
+**⚠️ PORTFOLIO MODE**: When generating briefs for multiple stocks (e.g. "投资组合简报"), you MUST execute ALL steps below for EACH CN_A stock separately. Do NOT batch or shortcut. Process one stock at a time: all 9 steps for stock A, then all 9 steps for stock B, etc.
+
 For each CN_A asset, execute ALL steps. Do NOT skip any step.
 
 Determine `{secid}`: code starts with 6 → `1.{code}` (SH), starts with 0/3 → `0.{code}` (SZ).
