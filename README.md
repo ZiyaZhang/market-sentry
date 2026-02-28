@@ -3,13 +3,13 @@
 **Multi-asset financial monitor for OpenClaw.**
 一个协助openclaw监控你的持仓异动的skills，支持A股、港股、美股、crypto，支持异动监控与提醒、收盘简报、异动解读，服务于你的投资组合～
 
-# 使用与安装：
+## 使用与安装：
 
 cd /path/to/openclaw/skills
 
 git clone https://github.com/ZiyaZhang/market-sentry.git
 
-# 英文介绍：
+## 英文介绍：
 
 `market-sentry` is an OpenClaw skill that provides narrative daily briefs, real-time anomaly alerts, and auditable data tracking for A-shares (CN_A), US stocks, and Crypto.
 
