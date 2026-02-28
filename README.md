@@ -1,7 +1,7 @@
 # market-sentry 📈
 
 **Multi-asset financial monitor for OpenClaw.**
-
+一个协助openclaw监控你的持仓异动的skills，支持A股、港股、美股、crypto，支持异动监控与提醒、收盘简报、异动解读，服务于你的投资组合～
 `market-sentry` is an OpenClaw skill that provides narrative daily briefs, real-time anomaly alerts, and auditable data tracking for A-shares (CN_A), US stocks, and Crypto.
 
 It is designed to be "quiet until necessary" (anomaly alerts) but "reliable when asked" (daily briefs), with a strong focus on data provenance via EvidencePacks.
