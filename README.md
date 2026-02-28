@@ -1,80 +1,96 @@
-# market-sentry
+# market-sentry 📈
 
-An [OpenClaw](https://docs.openclaw.ai/skills) skill for multi-asset financial monitoring with daily briefs, anomaly alerts, auditable evidence packs, and Feishu push notifications.
+**Multi-asset financial monitor for OpenClaw.**
+
+`market-sentry` is an OpenClaw skill that provides narrative daily briefs, real-time anomaly alerts, and auditable data tracking for A-shares (CN_A), US stocks, and Crypto.
+
+It is designed to be "quiet until necessary" (anomaly alerts) but "reliable when asked" (daily briefs), with a strong focus on data provenance via EvidencePacks.
 
 ## Features
 
-- **Daily Briefs** — Scheduled close-of-market reports for A-shares (15:00 CST), US stocks (16:05 ET), and crypto
-- **Anomaly Alerts** — Real-time price/volume anomaly detection with configurable thresholds
-- **Auditable Evidence Packs** — Every claim cites evidence with source URLs and timestamps
-- **Feishu Push** — Supports both Feishu App channel and group bot webhook
-- **Multi-market** — A-shares (东方财富 API + 巨潮资讯), US stocks (Yahoo Finance), Crypto (CoinGecko)
+- **Narrative Briefs**: Generates natural language daily digests (like a research note), not just bullet points.
+- **Multi-Market Support**:
+  - **A-shares (CN_A)**: K-line, **Fund Flow (主力资金)**, Volume Ratio (量比), Announcements (公告), Sector performance.
+  - **US Stocks**: Quote, News, SEC Filings (best-effort).
+  - **Crypto**: Price, Volume, On-chain data (optional).
+- **Anomaly Detection**:
+  - Price thresholds (e.g., >2% in 5m).
+  - Z-score statistical anomalies.
+  - Volume spikes.
+- **Feishu Integration**:
+  - **Mode A**: Direct message via Feishu App bot.
+  - **Mode B**: Rich Interactive Cards via Webhook (recommended).
+- **Auditable**: Every brief generates a JSON `EvidencePack` containing the raw API responses used to generate the text, ensuring no hallucination.
 
-## Quick Start
+## Prerequisites
 
-### 1. Install
+- **OpenClaw**: This is a skill for the [OpenClaw](https://github.com/openclaw/openclaw) agent framework.
+- **Feishu Webhook** (Optional but recommended): For rich card notifications.
+
+## Installation
+
+1.  Clone this repository into your OpenClaw skills directory:
+    ```bash
+    cd /path/to/your/openclaw/skills
+    git clone https://github.com/ZiyaZhang/market-sentry.git
+    ```
+
+2.  (Optional) Configure Feishu Webhook:
+    Add `FEISHU_WEBHOOK_URL` to your OpenClaw environment variables or `.env` file.
+
+## Usage
+
+### 1. Setup Portfolio
+Add assets to your watch list. The market is auto-detected.
 
 ```bash
-cp -r skills/market-sentry ~/.openclaw/workspace/skills/market-sentry
+/ms add 688306 均普智能 1000   # CN_A
+/ms add AAPL Apple 100        # US
+/ms add BTC Bitcoin 0.5       # CRYPTO
 ```
 
-### 2. Configure
-
-Add to `~/.openclaw/openclaw.json`:
-
-```json
-{
-  "skills": {
-    "entries": {
-      "market-sentry": {
-        "enabled": true
-      }
-    }
-  }
-}
+Or import in bulk:
+```bash
+/ms portfolio import
+600519 贵州茅台 100
+NVDA Nvidia 50
+ETH Ethereum 10
 ```
 
-### 3. Use
+### 2. Generate Briefs (On-Demand)
+Generate a narrative brief for a specific asset or the whole portfolio.
 
-Start a new OpenClaw session, then:
-
-```
-/ms setup feishu          # Test Feishu channel
-/ms portfolio import      # Import your holdings
-/ms brief 688306          # Generate a brief now
-/ms digest start          # Schedule daily briefs
-/ms watch start           # Start anomaly monitoring
+```bash
+/ms brief 688306          # Single asset
+/ms brief portfolio       # All assets (sequential)
 ```
 
-## Skill Structure
+### 3. Start Automation
+Set up cron jobs for daily digests and continuous monitoring.
 
+```bash
+/ms digest start   # Schedules daily briefs (15:00 CN, 16:05 US)
+/ms watch start    # Starts 5-minute silent anomaly monitoring
 ```
-skills/market-sentry/
-├── SKILL.md          # Main instructions (agent reads this)
-├── reference.md      # Data models, API details, card templates
-└── examples.md       # Example interactions and output
+
+### 4. Feishu Setup
+Check connection mode (App vs Webhook).
+
+```bash
+/ms setup feishu
 ```
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `/ms setup feishu` | Detect and test Feishu delivery channel |
-| `/ms portfolio import` | Import positions (text or image) |
-| `/ms watch add` | Add monitoring rules |
-| `/ms brief <symbol>` | Generate an immediate brief for any asset |
-| `/ms digest start` | Create scheduled digest cron jobs |
-| `/ms watch start` | Start anomaly detection cron |
-| `/ms explain <alert_id>` | Deep-dive explanation with evidence chain |
-| `/ms follow <alert_id>` | Enable follow-up tracking for an alert |
 
 ## Data Sources
 
-| Market | Quote & Flow | Events | News |
-|--------|-------------|--------|------|
-| CN_A | 东方财富 push2 API | 巨潮资讯 CNINFO | web_search |
-| US | Yahoo Finance | SEC EDGAR | web_search |
-| Crypto | CoinGecko API | — | web_search |
+- **CN_A**: Eastmoney (东方财富) APIs for K-line, historical fund flow, and announcements.
+- **US**: Finnhub (primary), Stooq (fallback).
+- **Crypto**: CoinGecko.
+
+## Architecture
+
+- **Briefs**: Triggered on-demand or via cron. They fetch comprehensive data (4+ sources for CN_A), generate a narrative, push to Feishu, and save a markdown file + JSON EvidencePack.
+- **Monitor**: Runs every 5 minutes (silent). Checks for price/volume anomalies. If a threshold is breached, it pushes an alert immediately.
+- **EvidencePack**: A JSON file saved to `data/evidence_packs/` for every generated brief. It proves *why* the agent wrote what it wrote.
 
 ## License
 
