@@ -16,11 +16,12 @@ from urllib.error import URLError
 
 CODE = sys.argv[1] if len(sys.argv) > 1 else None
 if not CODE:
-    print("Usage: python3 fetch_cn.py <stock_code> [output_dir]", file=sys.stderr)
+    print("Usage: python3 fetch_cn.py <stock_code> [output_dir] [stock_name]", file=sys.stderr)
     sys.exit(1)
 
 OUTDIR = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data", "fetched")
+STOCK_NAME_ARG = sys.argv[3] if len(sys.argv) > 3 else None
 os.makedirs(OUTDIR, exist_ok=True)
 
 SECID = f"1.{CODE}" if CODE[0] in ("6",) else f"0.{CODE}"
@@ -171,7 +172,7 @@ except Exception as e:
     errors.append(f"announcements parse: {e}")
 
 # ── 4b) News — eastmoney search API (SECONDARY, may be empty) ──
-stock_name = snapshot.get("name", "") if snapshot else ""
+stock_name = STOCK_NAME_ARG or (snapshot.get("name", "") if snapshot else "")
 search_keywords = [CODE]
 if stock_name:
     search_keywords.append(stock_name)

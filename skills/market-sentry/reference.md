@@ -54,6 +54,7 @@ Field rules:
 - `market`: `"CN_A"` | `"US"` | `"CRYPTO"` — determines which provider to use
 - `name`: human-readable name (required for CN_A, helps with search queries)
 - Auto-detect market: 6-digit numeric → `CN_A`, alphabetic 1-5 → `US`, known crypto tickers → `CRYPTO`
+- Users manage their own portfolio via `/ms add` and `/ms remove`. The above JSON is illustrative only.
 
 ### WatchRule (`watch_rules.json`)
 
@@ -139,43 +140,42 @@ The brief file is the narrative text exactly as pushed to Feishu. Example:
 {
   "pack_id": "B-688306-2026-02-25",
   "type": "narrative_brief",
+  "target_date": "2026-02-25",
   "asof": "2026-02-25T15:00:00+08:00",
   "asset": { "market": "CN_A", "symbol": "688306", "name": "均普智能" },
   "evidences": [
     {
-      "evidence_id": "E1a",
-      "source_type": "kline",
+      "evidence_id": "KLINE",
       "status": "ok",
-      "source_name": "东方财富 push2his",
-      "url_or_id": "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.688306&klt=101&fqt=1&end=20500101&lmt=3",
+      "url_or_id": "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.688306&klt=101&fqt=1&end=20500101&lmt=5",
       "retrieved_at": "2026-02-25T15:01:00+08:00",
       "excerpt": "close=10.52 pct=-1.68% high=10.83 low=10.66 amount=1.25亿 turnover=0.95%"
     },
     {
-      "evidence_id": "E1b",
-      "source_type": "flow_snapshot",
+      "evidence_id": "FLOW",
       "status": "ok",
-      "source_name": "东方财富 push2 stock/get",
-      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/get?secid=1.688306&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86",
+      "url_or_id": "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid=1.688306&klt=101&lmt=5",
       "retrieved_at": "2026-02-25T15:01:05+08:00",
-      "excerpt": "f137=-15417300(净流出1541.73万) f193=-12.35% f50=1.70"
+      "excerpt": "主力净流出1541.73万 占比12.35%"
     },
     {
-      "evidence_id": "E2",
-      "source_type": "announcement",
+      "evidence_id": "SNAP",
       "status": "ok",
-      "source_name": "巨潮资讯",
-      "url_or_id": "https://www.cninfo.com.cn/new/hisAnnouncement/query",
-      "attempted_url": "stock=688306&tabName=fulltext&pageSize=10&pageNum=1&seDate=2026-01-26~2026-03-04",
+      "url_or_id": "https://push2.eastmoney.com/api/qt/stock/get?secid=1.688306&fields=f57,f58,f50",
+      "retrieved_at": "2026-02-25T15:01:08+08:00",
+      "excerpt": "f50=170 量比=1.70"
+    },
+    {
+      "evidence_id": "ANN",
+      "status": "ok",
+      "url_or_id": "https://np-anotice-stock.eastmoney.com/api/security/ann?stock_list=688306",
       "retrieved_at": "2026-02-25T15:01:10+08:00",
-      "excerpt": "临时股东会2/27, 战略投资觅蜂科技2/13, 科创债2亿2/12"
+      "excerpt": "临时股东会2/27, 科创债2亿2/12"
     },
     {
-      "evidence_id": "E3",
-      "source_type": "news",
+      "evidence_id": "NEWS",
       "status": "ok",
-      "source_name": "GDELT",
-      "url_or_id": "https://api.gdeltproject.org/api/v2/doc/doc?query=(%22均普智能%22+OR+%22688306%22)&mode=artlist&format=json&maxrecords=5&timespan=1week",
+      "url_or_id": "https://api.gdeltproject.org/api/v2/doc/doc?query=...",
       "attempted_url": "query=(\"均普智能\" OR \"688306\")",
       "retrieved_at": "2026-02-25T15:01:15+08:00",
       "excerpt": "2 articles found"
@@ -186,9 +186,8 @@ The brief file is the narrative text exactly as pushed to Feishu. Example:
 ```
 
 Key rules:
-- E1b, E2, E3 MUST exist even when retrieval failed: `"status": "unavailable"` + `attempted_url` + `error`
+- All 5 evidence entries (KLINE, FLOW, SNAP, ANN, NEWS) MUST exist even when retrieval failed: set `"status": "unavailable"` + `attempted_url` + `error`
 - `claims` array may be empty for narrative briefs (analysis is woven into the narrative)
-- E1a = K-line data (OHLC/amount/turnover), E1b = real-time snapshot + fund flow + 量比
 
 ## Feishu Templates
 
@@ -323,36 +322,38 @@ GET https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&klt=101&
 
 Response: `data.klines` array, each = `"date,open,close,high,low,volume,amount,amplitude%,change_pct%,change_amount,turnover%"`
 
-### E1b: push2 stock/get (snapshot + 量比)
+### E1b: push2 stock/get (snapshot — mainly for 量比 and name)
 
+Primary use: fetch `f50` (量比) and `f58` (name). Price/change data should come from K-line (E1a) which is more reliable.
+
+Minimal request:
 ```
-GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f86
-```
-
-| Field | Meaning | Conversion |
-|---|---|---|
-| f57 | Code | — |
-| f58 | Name | — |
-| f43 | Price | 分→/100=元 (skip if already reasonable) |
-| f170 | Change% | 1/100%→/100=% |
-| f44 | High | 分→/100 |
-| f45 | Low | 分→/100 |
-| f46 | Open | 分→/100 |
-| f47 | Volume | 股 |
-| f48 | Amount | 元→/1e8=亿元, →/1e4=万元 |
-| f50 | 量比 (volume ratio) | /100 if >10, else as-is |
-| f168 | Turnover% | 1/100%→/100=% |
-| f86 | Timestamp | Unix sec → HH:MM CST |
-
-### E1c: fflow kline/get (PRIMARY fund flow source — 主力资金)
-
-**This is the dedicated fund flow endpoint. Use this as the primary source for 主力净流/净比.**
-
-```
-GET https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?secid={secid}&klt=101&lmt=1&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
+GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f50
 ```
 
-Response: `data.klines` = array of `"date,主力净流入,小单净流入,中单净流入,大单净流入,超大单净流入"` (all in 元).
+Full field set (for reference; f43/f170 encoding varies and is unreliable):
+
+| Field | Meaning | Conversion | Reliability |
+|---|---|---|---|
+| f57 | Code | — | reliable |
+| f58 | Name | — | reliable |
+| f50 | 量比 (volume ratio) | always /100 (e.g. 102→1.02) | reliable |
+| f43 | Price | encoding varies by stock | unreliable — use kline |
+| f170 | Change% | encoding varies | unreliable — use kline |
+| f47 | Volume | 股 | ok |
+| f48 | Amount | 元 | ok |
+| f137 | 主力净流入 (today only) | 元 | ok (fallback for fund flow) |
+| f193 | 主力净占比 (today only) | raw ÷100 = % | ok (fallback for fund flow) |
+
+### E1c: fflow daykline/get (PRIMARY fund flow source — 主力资金)
+
+**Use the HISTORICAL endpoint (push2his) as the primary source.** The real-time endpoint (push2) only returns today's data and cannot be used for 昨日简报.
+
+```
+GET https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid={secid}&klt=101&lmt=5&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
+```
+
+Response: `data.klines` = array of `"date,主力净流入,小单净流入,中单净流入,大单净流入,超大单净流入,主力净占比%,小单净占比%"` (流入 in 元, 占比 in %).
 
 | Column | Meaning | Conversion |
 |---|---|---|
@@ -362,16 +363,15 @@ Response: `data.klines` = array of `"date,主力净流入,小单净流入,中单
 | 3 | 中单净流入 | 元→/1e4=万元 |
 | 4 | 大单净流入 | 元→/1e4=万元 |
 | 5 | 超大单净流入 | 元→/1e4=万元 |
+| 6 | 主力净占比 | % (已计算好, 可直接用; 取 abs 用于展示) |
+| 7 | 小单净占比 | % |
+
+Pick the entry whose `date` matches the kline target_date.
 
 **Calculations**:
 - `main_net_wan = abs(column_1) / 10000`
-- `main_ratio = abs(column_1) / amount_from_E1a * 100` (占成交额%)
+- `ratio_pct = abs(column_6)` (优先用 API 返回的占比; fallback: `abs(column_1) / amount_from_E1a * 100`)
 - 散户方向 = inverse of 主力 (if 主力净流出 → 散户净流入)
-
-**Historical fund flow** (recent N days, for trend):
-```
-GET https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid={secid}&klt=101&lmt=30&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58
-```
 
 ### Sector board data (clist/get)
 
@@ -393,10 +393,12 @@ GET https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids={secid_list}&f
 ```
 f62=主力净流入, f184=主力净比, f66=超大单净流入, f69=超大单净比, etc.
 
-### Fallback: f137/f193 from stock/get
+### Fallback: f137/f193 from stock/get (REAL-TIME ONLY)
 
-If fflow kline/get fails, add f137,f193 to the stock/get request as fallback:
+If push2his fflow/daykline/get (E1c) fails, add f137,f193 to the stock/get request as fallback.
+**WARNING**: f137/f193 only reflect TODAY's fund flow. Cannot be used for 昨日简报.
+
 ```
-GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f170,f44,f45,f46,f47,f48,f50,f168,f137,f193,f86
+GET https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f50,f137,f193
 ```
-f137 = main net inflow (元), f193 = main net ratio (%). Use same calculations.
+f137 = main net inflow (元), f193 = main net ratio raw (÷100 = %). Use same calculations as E1c.
